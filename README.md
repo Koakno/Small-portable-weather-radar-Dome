@@ -469,6 +469,7 @@ v1.0 - 2026-06-22 - Initial build reference
   Motor control port confirmed: external RJ-25 knockout panel
   Baud rate confirmed: 57600 (from SaveItForParts repo)
   Video reference confirmed: youtu.be/QkvNH-tuAOo
+you can support me at https://venmo.com/code?user_id=4625217389332152822&created=1782227464
 
 ================================================================
 END OF DOCUMENT
