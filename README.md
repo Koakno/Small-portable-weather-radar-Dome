@@ -1,477 +1,434 @@
-================================================================
-DIY MOBILE WEATHER RADAR — BUILD REFERENCE
-Winegard Carryout Anser GM-5000 + HackRF One
-================================================================
-A low-cost mobile weather radar for storm chasing and severe
-weather detection. No internet required. Fully self-contained.
-Built around a salvaged RV satellite dome, a cheap SDR, and
-open source software.
+# Small Portable Weather Radar
 
-Inspired by SaveItForParts (github.com/saveitforparts) whose
-Carryout-Radio-Telescope project proved the hardware concept.
-This document extends that work toward a functional weather
-radar application for storm chasing.
+> A self-contained mobile weather radar system built from a $5 salvaged RV satellite dome, a cheap SDR, and open source software. No internet required. No subscription. No NWS data dependency. Your own radar returns, updated every 10-30 seconds, mounted on your vehicle.
 
-Estimated total cost: $90-165 depending on options
-Expected detection range: 3-15 km (reverse drive LNB)
-                          15-40 km (with Gunn oscillator TX)
+**Built in Kokomo, Indiana. Motivated by real severe weather — including tornadoes that came within a few miles of home.**
 
-----------------------------------------------------------------
-THEORY OF OPERATION
-----------------------------------------------------------------
+---
 
-The Winegard Carryout Anser contains a prime focus parabolic
-dish with an Eagle Aspen LNB (Low Noise Block downconverter)
-at the focal point. The LNB is designed to receive 12.2-12.7
-GHz satellite signals and downconvert them to 950-1450 MHz IF
-for the coax run to a satellite receiver.
+## Why This Exists
 
-For radar use we reverse-drive the LNB: inject a signal at the
-IF frequency (850 MHz) into the coax, which the LNB upconverts
-to 10.4 GHz and radiates through the dish as a narrow beam.
-Rain, hail, and storm debris reflect a portion of that energy
-back to the dish, which the LNB downconverts back to 850 MHz
-for the SDR to capture.
+Every storm chaser on the road is looking at NEXRAD data that is 4-6 minutes old, from a radar station that may be 100+ miles away. At close range the NWS beam overshoots low-altitude storm features entirely due to Earth curvature and beam elevation. When a supercell is 10 km away and moving at 40 mph, 6-minute-old data from a distant station is not situational awareness — it is history.
 
-The azimuth motor sweeps the dish in a full 360 degree arc,
-building a Plan Position Indicator (PPI) radar image from the
-signal strength at each bearing.
+This project generates local radar returns from a vehicle-mounted dish. Updates every 10-30 seconds. Range 3-40 km depending on configuration. Detects rain cores, hail shafts, and tornado debris balls. Costs under $200 to build.
 
-TX frequency math:
-  LNB LO (11250 MHz) - Target (10400 MHz) = 850 MHz injection
-  Any signal injected at 850 MHz exits the dish at 10.4 GHz
+Professional mobile Doppler radar trucks (DOW — Doppler on Wheels) do the same thing. They cost $500,000+. This costs less than a tank of gas.
 
-----------------------------------------------------------------
-ANTENNA HARDWARE
-----------------------------------------------------------------
+---
 
-Winegard Carryout Anser GM-5000
-  Description:   Automatic portable RV satellite dome
-  Dish type:     Prime focus parabolic, polished aluminum
-  Dish size:     Approximately 18-22 inches diameter
-  Gain at 10GHz: ~32-33 dBi
-  Beamwidth:     ~4-5 degrees
-  Rotation:      Single axis azimuth motor only
-  Elevation:     Manual set and lock (no firmware limit)
-  Drive:         Belt driven, ~360 degrees in 10 seconds
-  Weight:        ~16 lbs
-  Wind rating:   35 mph maximum (stow during transit)
+## What It Looks Like Running
 
-LNB: Eagle Aspen 501353
-  Type:          Voltage switched DBS dual output
-  Input band:    12.2 - 12.7 GHz
-  LO frequency:  11250 MHz
-  IF output:     950 - 1450 MHz
-  Outputs:       MAIN + SEC (both active simultaneously)
-  Polarization:  13V = one pol, 18V = other pol
-                 (does not matter for radar use)
-  Bias power:    Supplied by receiver via coax (NOT internal)
-                 External bias tee required
+Live PPI radar display served as a web page, accessible on any device on your local network or remotely via Cloudflare tunnel. Offline Indiana county and road map overlay. Four-tier auditory alert system. GPS position tracking. Session recording with standalone HTML replay. Transit mode that locks the dish forward while driving and resumes full sweeps when stopped.
 
-External connectors (on side of dome base):
-  MAIN:  F connector, primary LNB output (use for HackRF)
-  SEC:   F connector, secondary LNB output (use for RTL-SDR)
-  PWR:   2-pin proprietary 12V DC input, ~1A draw
+[![Live at radar.koakno.com](https://img.shields.io/badge/Live%20Demo-radar.koakno.com-00FFFF?style=flat-square)](https://radar.koakno.com)
 
-Motor control port:
-  Location: Knockout panel on dome base, accessible externally
-            Pop out the thin plastic knockout panel to expose
-            the RJ-25 jack (intentional service access point)
-  Connector: RJ-25 6-pin
-  Protocol:  RS-485 serial
-  Baud rate: 57600
-  Note: Azimuth 0 degrees is approximately North
-        MAIN/SEC F connectors sit at approximately 135 degrees
+---
 
-Included accessories:
-  25 ft 12V power cable with car adapter
-  20 ft RG6 coax cable
+## How It Works
 
-----------------------------------------------------------------
-HARDWARE TO BUY
-----------------------------------------------------------------
+### Theory of Operation
 
-CRITICAL (needed to begin):
+The Winegard Carryout Anser GM-5000 is an automatic RV satellite dome — a motorized prime focus parabolic dish in a weatherproof radome. It was designed to find and track TV satellites. We repurpose it as a scanning X-band radar antenna.
 
-  [ ] HackRF One clone
-        Purpose:   TX/RX SDR, reverse drives the LNB
-        Where:     AliExpress, eBay, or Amazon
-        Search:    "HackRF One r9" (specify revision)
-        Price:     ~$50-80
-        Notes:     Avoid listings under $40 (quality issues)
-                   Allow 2-3 weeks shipping from AliExpress
-                   Nooelec brand on Amazon ~$90, ships fast
-                   Has ONE antenna port (ANT) for both TX/RX
-                   Second port (CLKOUT) is 10MHz reference only
+The Eagle Aspen LNB inside operates at 11250 MHz local oscillator frequency. Injecting a signal at **850 MHz** into the LNB's IF port causes it to upconvert and radiate at **10.4 GHz** through the dish — the same X-band frequency used by weather radar. Rain, hail, and debris reflect a portion of that energy back. The LNB downconverts the echo back to 850 MHz for the SDR to capture.
 
-  [ ] F-to-SMA adapter (buy 2)
-        Purpose:   Connects RG6 coax F connectors to HackRF SMA
-        Type:      Female F to Male SMA
-        Where:     Walmart TV section, Amazon, any electronics
-        Price:     ~$5-10 for a pack
+```
+TX injection frequency math:
+  LNB LO (11250 MHz) - Target (10400 MHz) = 850 MHz
+  Inject 850 MHz → dish radiates 10.4 GHz
+```
 
-  [ ] DTECH RS232-to-RS485 converter
-        Purpose:   Motor control serial interface
-        Brand:     Specifically DTECH brand recommended
-        Where:     Amazon, search "DTECH RS232 RS485"
-        Price:     ~$12
+The azimuth motor sweeps the dish continuously, building a Plan Position Indicator (PPI) image from signal strength at each bearing.
 
-  [ ] RJ-25 6-pin phone cord
-        Purpose:   Connects RS-485 adapter to dome control port
-        Important: Must be 6 conductor RJ-25, NOT standard
-                   4-conductor RJ-11 phone cord
-        Where:     Walmart phone accessories, Amazon
-        Price:     ~$5
+### Signal Chain
 
-  [ ] USB-to-Serial cable
-        Purpose:   Connects laptop to DTECH RS485 adapter
-        Where:     Amazon, any electronics store
-        Price:     ~$10
+```
+SDR TX port (850 MHz)
+    → F-to-SMA adapter
+        → MAIN F port on dome
+            → LNB upconverts to 10.4 GHz
+                → dish radiates into sky
+                    → rain/hail/debris returns echo
+                → dish captures echo
+            → LNB downconverts to 850 MHz
+        → SEC F port (dedicated receive path)
+    → SDR RX port
+```
 
-  [ ] Torx screwdriver set
-        Purpose:   Opening dome for internal access if needed
-        Sizes:     T10 and T15 for inner dome screws
-                   T20 and T25 for outer ring screws
-        Where:     Harbor Freight, any hardware store
-        Price:     ~$6-8
+The **MAIN** port handles TX injection. The **SEC** port (second LNB output, active simultaneously) provides a clean dedicated receive path. A bias tee on the SEC coax powers the LNB. No shared TX/RX path, no switching, no backfeed concern.
 
-RECOMMENDED:
+---
 
-  [ ] RTL-SDR V4
-        Purpose:   Dedicated receive-only SDR on SEC port
-                   Built-in software-switchable bias tee
-                   Powers LNB via SEC coax (no external bias tee
-                   needed on that port)
-        Where:     rtl-sdr.com or Amazon
-        Price:     ~$35
+## Hardware
 
-  [ ] 10 dB SMA attenuator
-        Purpose:   Protects HackRF ANT port from strong
-                   reflections at close range
-        Where:     Amazon, search "SMA 10dB attenuator"
-        Price:     ~$5
+### The Dome
 
-BIAS TEE (choose one option):
+**Winegard Carryout Anser GM-5000**
 
-  Option A - Use RTL-SDR V4 bias tee (recommended):
-        Connect RTL-SDR V4 to SEC port, enable bias tee in
-        software. Powers LNB automatically. No components needed.
+| Spec | Value |
+|---|---|
+| Dish type | Prime focus parabolic, polished aluminum |
+| Dish diameter | ~18-22 inches |
+| Gain at 10 GHz | ~32-33 dBi |
+| Beamwidth | ~4-5° |
+| Azimuth | Belt driven motor, ~360° in 10 seconds |
+| Elevation | Manual set and lock |
+| Wind rating | 35 mph maximum |
+| Weight | ~16 lbs |
+| Includes | 25 ft power cable, 20 ft RG6 coax |
 
-  Option B - Build internal bias tee:
-        [ ] 100uH inductor (through-hole)  ~$1
-        [ ] 100pF ceramic capacitor        ~$1
-        Solder inline at red wire/coax junction inside dome.
-        Blocks RF from 12V supply, blocks DC from HackRF.
-        Eliminates need for any external bias tee hardware.
+**LNB: Eagle Aspen 501353**
 
-  Option C - External bias tee:
-        [ ] RTL-SDR brand bias tee         ~$10-15
-        Inline between MAIN port and HackRF ANT port.
+| Spec | Value |
+|---|---|
+| Input band | 12.2–12.7 GHz |
+| LO frequency | 11250 MHz |
+| IF output | 950–1450 MHz |
+| Outputs | MAIN + SEC (simultaneous) |
+| LNB bias power | External — supplied via coax |
 
-FUTURE UPGRADE (significantly extends range):
+**Motor Control Port**
 
-  [ ] 10 GHz Gunn oscillator
-        Purpose:   Dedicated TX source, replaces reverse-drive
-                   method. Dramatically improves detection range.
-        Where:     eBay, search "10 GHz Gunn oscillator" or
-                   "10GHz beacon transmitter"
-        Price:     ~$20-60 used
-        Notes:     Needs 8-12V DC at ~300mA
-                   Requires 10 GHz circulator to share antenna
-                   Or use second dish as dedicated TX antenna
+The dome has a thin plastic knockout panel on the base housing. Pop it out with a flathead screwdriver — it is factory-designed to be removed (thin score lines in the plastic, identical to the insert between a milk jug handle and body). The RJ-25 RS-485 control jack is immediately behind it.
 
-----------------------------------------------------------------
-MOTOR CONTROL WIRING
-----------------------------------------------------------------
-
-The RJ-25 control port is accessible externally on the dome
-base. Look for a thin plastic knockout panel on the side of
-the dome housing. Pop it out with a flathead screwdriver --
-it is intentionally designed to be removed (thin score lines
-in the molding). The RJ-25 jack is immediately behind it.
-
-Connection chain:
-  Laptop USB
-    -> USB-to-Serial cable
-      -> DTECH RS232-to-RS485 converter
-        -> RJ-25 6-pin cable
-          -> Dome control port
-
-RJ-25 pinout (viewing pin side of connector, cable end up):
+```
+RJ-25 pinout (pin side up, cable end toward you):
   Pin 1: GND
-  Pin 2: T/R-  (RS-485 transmit/receive negative)
-  Pin 3: T/R+  (RS-485 transmit/receive positive)
-  Pin 4: RXD-  (RS-485 receive negative)
-  Pin 5: RXD+  (RS-485 receive positive)
+  Pin 2: T/R-
+  Pin 3: T/R+
+  Pin 4: RXD-
+  Pin 5: RXD+
   Pin 6: Not connected
 
-Serial parameters:
-  Baud rate:  57600
-  Data bits:  8
-  Stop bits:  1
-  Parity:     None
-  Flow ctrl:  None
+Baud rate: 57600, 8N1
+```
 
-Quick test (Linux):
-  screen /dev/ttyUSB0 57600
+---
 
-Azimuth coordinate system:
-  0 degrees   = approximately North
-  135 degrees = approximately where MAIN/SEC F connectors face
-  Motor does full 360 degree rotation with limit switches
-  Mark your dome for field orientation reference
+## Supported SDR Hardware
 
-----------------------------------------------------------------
-SIGNAL CHAIN
-----------------------------------------------------------------
+The software supports multiple SDR backends selectable via `config.py`:
 
-Normal operation (HackRF on MAIN, RTL-SDR on SEC):
+| SDR | Type | Config value | Notes |
+|---|---|---|---|
+| Zynq7020 + AD9363 | 2TX 2RX full duplex | `"pluto"` | **Recommended** — separate TX1/RX1 ports, libiio compatible, boots Pluto firmware from SD card |
+| ADALM PlutoSDR | Full duplex | `"pluto"` | Official Pluto, same libiio backend |
+| HackRF One | Half duplex | `"hackrf"` | Single ANT port handles TX and RX, switches ~1-2µs |
+| RTL-SDR V4 | **Receive only** | `"rtlsdr"` | No TX capability — passive monitoring only. Built-in bias tee powers LNB via coax. |
+| None | Simulation | `"simulate"` | Full software simulation, no hardware required |
 
-  TRANSMIT:
-  HackRF ANT port
-    -> [10dB attenuator optional]
-      -> F-to-SMA adapter
-        -> MAIN F port
-          -> internal coax (red wire)
-            -> LNB MAIN output
-              -> LNB mixer (upconverts 850MHz to 10.4GHz)
-                -> LNB waveguide/feed horn
-                  -> dish reflector
-                    -> 10.4 GHz beam into sky
+### Zynq7020 + AD9363 Wiring (Recommended)
 
-  RECEIVE (HackRF switches TX/RX internally, ~1-2 microseconds):
-  Echo returns from rain/hail/debris
-    -> dish reflector
-      -> feed horn/waveguide
-        -> LNB mixer (downconverts 10.4GHz echo to 850MHz)
-          -> MAIN F port
-            -> F-to-SMA adapter
-              -> HackRF ANT port
+```
+TX1 port → F-to-SMA → MAIN F port (TX injection, no bias tee)
+RX1 port → F-to-SMA → SEC F port  (receive, bias tee here powers LNB)
+```
 
-  OPTIONAL DEDICATED RECEIVE:
-  Same echo path via LNB SEC output
-    -> SEC F port
-      -> F-to-SMA adapter
-        -> RTL-SDR V4 ANT port
-          (RTL-SDR bias tee powers LNB simultaneously)
+Connect the Zynq board's physical Ethernet port to your router. The SDR is accessed via libiio over the network — no USB SDR driver issues, works from any platform including Android.
 
-HackRF port clarification:
-  ANT port   = your radar RF connection (TX and RX)
-  CLKOUT port = 10MHz reference clock output only, NOT for RF
+### HackRF One Port Clarification
 
-TX/RX timing (why switching speed is not a problem):
-  HackRF TX/RX switch time:  ~1-2 microseconds
-  Round trip at 3km:         ~20 microseconds
-  Round trip at 5km:         ~33 microseconds
-  Round trip at 10km:        ~67 microseconds
-  Round trip at 20km:        ~133 microseconds
-  Echo always arrives well after switch completes.
+The HackRF has two SMA connectors. Many people misidentify them:
 
-----------------------------------------------------------------
-KEY FREQUENCIES
-----------------------------------------------------------------
+- **ANT** — your radar RF connection. Handles both TX and RX internally.
+- **CLKOUT** — 10 MHz reference clock output only. Not an RF signal port.
 
-LNB local oscillator frequency:    11250 MHz
-Target radar TX frequency:         10400 MHz
-HackRF injection frequency:          850 MHz
-  (11250 - 10400 = 850 MHz IF injection)
-LNB IF output passband:         950-1450 MHz
-Echo return frequency at SDR:        850 MHz
+---
 
-LNB input band (designed):    12200-12700 MHz
-Radar frequency vs design:    10400 MHz (below designed band)
-  Note: LNB operates outside its optimized band at 10.4GHz.
-  Efficiency is reduced but sufficient for proof of concept.
-  A dedicated 10GHz LNB improves performance if desired.
+## Shopping List
 
-----------------------------------------------------------------
-EXPECTED DETECTION PERFORMANCE
-----------------------------------------------------------------
+### Essential
 
-Reverse-drive LNB only (~1-5mW effective TX power):
-  Heavy downpour (>25mm/hr):      3-8 km
-  Supercell hail core:            8-15 km
-  Tornado debris ball:            10-20 km
-  Moderate rain (5mm/hr):         1-3 km
-  Light rain/drizzle:             unlikely
+| Item | Notes | Price |
+|---|---|---|
+| Winegard Carryout Anser GM-5000 | Salvage yards, RV surplus, Facebook Marketplace | $5–40 |
+| Zynq7020+AD9363 SDR board | eBay, search "Zynq7020 AD9363 SDR", libiio/Pluto compatible | ~$145 |
+| F-to-SMA adapters (×2) | Female F to Male SMA | ~$10 |
+| DTECH RS232-to-RS485 converter | Specifically DTECH brand | ~$12 |
+| RJ-25 6-pin phone cord | Must be 6-conductor, NOT standard RJ-11 | ~$5 |
+| USB-to-Serial cable | Any brand | ~$10 |
+| Torx screwdriver set | T10, T15 for inner dome | ~$8 |
 
-With 4W Gunn oscillator TX (future upgrade):
-  Heavy rain detection:           15-40 km
-  Supercell core:                 30-60 km
-  Tornado debris ball:            20-40 km
+### Recommended
 
-Scan performance:
-  Full 360 degree sweep:          ~10 seconds
-  180 degree hemisphere:          ~5 seconds
-  90 degree sector scan:          ~2.5 seconds
-  Angular resolution:             1-2 degrees recommended
+| Item | Notes | Price |
+|---|---|---|
+| RTL-SDR V4 | Built-in bias tee powers LNB via SEC port | ~$35 |
+| 10 dB SMA attenuator | Inline on TX path, protects SDR from close-range reflections | ~$5 |
 
-Storm chasing notes:
-  - Supercells are ideal targets: large, high reflectivity,
-    hail dramatically increases radar return strength
-  - Tornado debris ball detectable even at low power levels
-  - Sector scanning toward storm gives near real-time updates
-  - NEXRAD updates every 4-6 minutes; this system updates
-    every 2-10 seconds depending on scan sector size
+### Future Upgrade
 
-----------------------------------------------------------------
-SOFTWARE TO INSTALL (Linux/Ubuntu/Debian)
-----------------------------------------------------------------
+| Item | Notes | Price |
+|---|---|---|
+| 10 GHz Gunn oscillator | eBay "10GHz Gunn oscillator" — replaces reverse-drive method, dramatically extends range | ~$20–60 |
 
-1. GNU Radio (signal processing engine)
-     sudo apt install gnuradio
+### Bias Tee (choose one)
 
-2. HackRF drivers
-     sudo apt install soapysdr-tools
-     sudo apt install soapysdr-module-hackrf
+**Option A — RTL-SDR V4 (recommended):** Connect to SEC port, enable bias tee in software. Powers LNB automatically.
 
-3. RTL-SDR drivers
-     sudo apt install rtl-sdr
+**Option B — Internal build:** Solder a 100µH inductor and 100pF capacitor inline at the LNB coax junction inside the dome. ~$2 in parts, permanently integrated.
 
-4. GQRX (graphical SDR for initial testing)
-     sudo apt install gqrx-sdr
+**Option C — External:** RTL-SDR brand bias tee inline on the SEC coax. ~$12.
 
-5. Inspectrum (offline signal file analysis)
-     sudo apt install inspectrum
+---
 
-6. Hamlib / rotctld (standard rotor control daemon)
-     sudo apt install hamlib-utils
+## Software Stack
 
-7. Python dependencies
-     pip install pyserial numpy matplotlib scipy
+### Architecture
 
-8. SaveItForParts motor control repository
-     git clone https://github.com/saveitforparts/Carryout-Radio-Telescope
-     git clone https://github.com/saveitforparts/Carryout-Rotor
+```
+portable_radar/
+├── run.py              Entry point, elevation prompt, launches stack
+├── config.py           All settings in one place
+├── app.py              Flask web server, /api/telemetry endpoint
+├── radar_scanner.py    Main scan loop thread
+├── motor.py            RS-485 motor control, paced sweep, position verify
+├── sdr.py              SDR hardware abstraction (HackRF/Pluto/RTL-SDR/Sim)
+├── gps.py              NMEA GPS parser, speed detection, transit mode
+├── recorder.py         Session recording (run alongside main stack)
+├── replay.py           Generates standalone HTML replay from session file
+├── simplify_maps.py    One-time GeoJSON optimization (run once before first use)
+├── lora_bridge.py      LoRa alert uplink via Heltec V4 (optional)
+├── static/
+│   ├── indiana_counties.geojson
+│   └── indiana_roads.geojson
+└── templates/
+    └── index.html      Live radar PPI display
+```
 
-   Key file to study: carryout_scan.py
-   This handles RS-485 motor commands and RTL-SDR signal
-   capture. Adapt the signal capture portion for HackRF
-   while keeping the motor control logic intact.
+### Installation (Linux/Ubuntu/Debian)
 
-----------------------------------------------------------------
-BRING-UP PROCEDURE (first time setup)
-----------------------------------------------------------------
+```bash
+# System dependencies
+sudo apt install python3-pip python3-numpy rtl-sdr \
+     soapysdr-tools soapysdr-module-hackrf gnuradio \
+     gqrx-sdr hamlib-utils
 
-Step 1 - Verify motor control
-  - Connect RS-485 chain to RJ-25 port
-  - Power dome via 2-pin power connector
-  - Run carryout_scan.py from SaveItForParts repo
-  - Confirm dome responds to azimuth commands
-  - Note azimuth 0 position relative to compass heading
+# Python dependencies
+pip install flask pyserial gpsd-py3
 
-Step 2 - Verify LNB power
-  - Connect RTL-SDR V4 to SEC port
-  - Enable bias tee in RTL-SDR software
-  - Confirm LNB is powered (dome should behave normally)
+# Clone this repo
+git clone https://github.com/Koakno/Small-portable-weather-radar-Dome
+cd Small-portable-weather-radar-Dome/portable_radar
 
-Step 3 - Verify receive chain
-  - Open GQRX, tune to 850 MHz
-  - Point dish at a known signal source if available
-  - Verify signal appears at 850 MHz in GQRX waterfall
+# Optimize map files (run once before first use)
+python3 simplify_maps.py
 
-Step 4 - First TX test (bench)
-  - Connect HackRF ANT port to MAIN F port via adapter
-  - Set HackRF to transmit at 850 MHz, low power
-  - Point dish at a metal object (pot, bowl, car hood)
-  - Watch for echo return at 850 MHz in receive window
-  - Move metal object, confirm signal changes
+# Run
+python3 run.py
+```
 
-Step 5 - Outdoor test
-  - Set elevation manually to ~10-15 degrees
-  - Run azimuth sweep while transmitting
-  - Log signal strength vs azimuth position
-  - Plot basic PPI display from logged data
+### Installation (Termux / Android)
 
-Step 6 - Storm deployment
-  - Mount on vehicle roof rack
-  - Orient azimuth 0 to North using compass
-  - Set elevation to 5-10 degrees for storm scanning
-  - Run sector scan toward storm bearing
-  - Monitor PPI display for echo returns
+```bash
+pkg install python python-numpy
+pip install --break-system-packages pyserial flask
 
-----------------------------------------------------------------
-LICENSING
-----------------------------------------------------------------
+# If python3 and numpy version mismatch:
+python3.14 run.py  # use whichever version numpy installed for
+```
 
-Transmitting at 10.4 GHz (3cm amateur band) legally requires
-a minimum Technician class amateur radio license in the US.
+Tested on Samsung Galaxy S10+ via Termux. Knox limits direct USB SDR access — use the Zynq board's physical Ethernet port via WiFi router instead.
 
-  Exam:      35 multiple choice questions
-  Fee:       ~$15
-  Study:     HamStudy.org (free practice tests)
-  Prep time: 1-2 weeks for most people
-  Benefits:  Also enables APRS storm chaser position reporting
-             and VHF/UHF communication with other chasers
+### Configuration
 
-The Technician license covers all amateur frequencies above
-50 MHz including the full microwave spectrum.
+Edit `config.py` before running:
 
-----------------------------------------------------------------
-RESOURCES
-----------------------------------------------------------------
+```python
+SDR_TYPE    = "pluto"         # hackrf / pluto / rtlsdr / simulate
+SERIAL_PORT = "/dev/ttyUSB0"  # RS-485 adapter port
+GPS_PORT    = "/dev/ttyACM0"  # GPS device port
+MANUAL_LAT  = 40.4864         # Fallback if no GPS
+MANUAL_LON  = -86.1336
 
-SaveItForParts GitHub repositories:
-  github.com/saveitforparts/Carryout-Radio-Telescope
-  github.com/saveitforparts/Carryout-Rotor
+TARGET_SWEEP_SECONDS   = 18   # Full 360° sweep duration (slower = more accurate)
+TRANSIT_MODE_SPEED_MPH = 5.0  # Above this, dish locks forward while driving
+```
 
-SaveItForParts YouTube videos:
-  Carryout Anser teardown and motor control:
-    youtu.be/QkvNH-tuAOo
-  Microwave imaging with hacked TV dish:
-    youtube.com/watch?v=lVOTZxNCgTM
-  Hacking a Winegard Travler RV dish:
-    youtube.com/watch?v=sn-Ayr4j6Ac
+### Running
 
-Software:
-  GNU Radio:         gnuradio.org
-  RTL-SDR drivers:   rtl-sdr.com
-  GQRX:             gqrx.dk
-  HamStudy (license): hamstudy.org
+```bash
+python3 run.py
+```
 
-Weather / storm chasing:
-  NWS Indianapolis SKYWARN: weather.gov/ind/skywarn
-  Spotter Network:           spotternetwork.org
+On startup you will be prompted for the current dish elevation:
 
-Hardware sources:
-  HackRF One clone:  AliExpress, eBay, nooelec.com
-  RTL-SDR V4:        rtl-sdr.com, Amazon
-  Gunn oscillator:   eBay search "10 GHz Gunn oscillator"
+```
+  Elevation Configuration
+  ========================
+  Elevation motor: NOT DETECTED (manual mode)
 
-----------------------------------------------------------------
-ESTIMATED TOTAL COST
-----------------------------------------------------------------
+  Enter current dish elevation (degrees):
+    5°  — shallow, best long range storm detection
+   15°  — moderate, good general use
+   30°  — steep, useful close to a storm
 
-  Winegard Carryout Anser GM-5000 (salvage):   $5-40
-  HackRF One clone:                           $50-80
-  RTL-SDR V4:                                    $35
-  Torx screwdriver set:                         $6-8
-  F-to-SMA adapters (x2):                      $5-10
-  DTECH RS232-to-RS485 converter:               $12
-  RJ-25 6-pin cable:                             $5
-  USB-to-Serial cable:                           $10
-  10 dB SMA attenuator:                          $5
-  Bias tee components (if building internal):    $2
-                                           ---------
-  TOTAL (Carryout from salvage at $5):    ~$135-167
-  TOTAL (Carryout purchased new ~$40):    ~$170-202
+  Elevation > 10
+  [OK] Fixed elevation: 10°
+       Azimuth correction: -4.0° applied to all returns
+```
 
-Future upgrade - Gunn oscillator TX:         $20-60
-  Adds significant range improvement
+The software applies an automatic azimuth correction to compensate for the offset dish geometry coupling elevation into azimuth. Open your browser to `http://localhost:5000` or access remotely via your Cloudflare tunnel.
 
-================================================================
-DOCUMENT VERSION HISTORY
-================================================================
+---
 
-v1.0 - 2026-06-22 - Initial build reference
-  Hardware confirmed: Winegard Carryout Anser GM-5000
-  LNB confirmed: Eagle Aspen 501353
-  Motor control port confirmed: external RJ-25 knockout panel
-  Baud rate confirmed: 57600 (from SaveItForParts repo)
-  Video reference confirmed: youtu.be/QkvNH-tuAOo
-  
-you can support me at https://venmo.com/code?user_id=4625217389332152822&created=1782227464
+## Features
 
-================================================================
-END OF DOCUMENT
-================================================================
+### Live Radar Display
+
+- Canvas-based PPI (Plan Position Indicator) radar scope
+- Standard NWS reflectivity color scale (cyan → green → yellow → orange → red → magenta)
+- Offline Indiana county boundaries and road overlay (no internet required)
+- Real-time sweep line animation at 60fps
+- Auto-refresh telemetry every 200ms
+- Accessible on any device via local WiFi or Cloudflare tunnel
+
+### Alert System
+
+Four-tier auditory and visual alert system:
+
+| Tier | Name | Trigger | Audio |
+|---|---|---|---|
+| 1 | INFO | Any precipitation detected | Single chime |
+| 2 | CAUTION | Storm core in range | Double chime |
+| 3 | WARNING | Supercell characteristics | Triple beep |
+| 4 | DANGER | Debris ball / return within 5 km | Rapid alarm |
+
+Alerts require 2 consecutive sweep confirmations before triggering (reduces false positives). 30-second cooldown between repeated same-tier alerts.
+
+### Transit Mode
+
+GPS speed is monitored continuously. Above `TRANSIT_MODE_SPEED_MPH` (default 5 mph):
+
+- Dish locks to azimuth 0 (forward, toward storm while driving)
+- Full sweep suspended
+- Forward-looking returns still captured and displayed
+- Mode indicator on web display changes to orange `TRANSIT`
+
+Below threshold, full azimuth sweeps resume automatically.
+
+### Session Recording and Replay
+
+```bash
+# Record a chase session (run in second terminal alongside main stack)
+python3 recorder.py
+
+# Generate standalone replay (no server needed)
+python3 replay.py sessions/session_2026-06-29_143210.json
+```
+
+The replay generates a single self-contained HTML file with all session data embedded. VCR-style controls: play/pause, step, scrub, speed selector (0.5x–5x). Opens automatically in your browser. A CSV export is generated alongside the JSON for sharing with NWS/NOAA or other researchers.
+
+### Heltec V4 GPS + LoRa Bridge (Optional)
+
+The `heltec_gps_lora_bridge.ino` sketch turns a Heltec WiFi LoRa 32 V4 into a bidirectional bridge:
+
+- **GPS uplink:** streams NMEA sentences from an attached GPS module over USB — laptop sees it as a standard USB GPS receiver, no special drivers
+- **LoRa downlink:** receives `ALERT:<tier>:<message>` commands from the laptop over the same USB serial line and transmits them over LoRa 915 MHz to any receiver in range
+- **OLED display:** shows live coordinates, fix status, satellite count, speed, and transit mode indicator
+
+The V3 board is also supported (different GPIO pins, no dedicated GNSS connector — wire a GPS module to GPIO33/34 instead).
+
+---
+
+## Deployment
+
+### North Alignment
+
+**Important:** Azimuth 0 on the dome corresponds to approximately North, assuming the dish is mounted facing the front of the vehicle. Align your vehicle to North before deploying using a compass app on your phone. Built-in vehicle compasses typically only indicate the nearest 45° cardinal direction — a phone compass app gives actual degree readings and is sufficient for alignment at this beamwidth.
+
+### Elevation and Azimuth Coupling
+
+The Carryout Anser's offset dish geometry means changing elevation also shifts the effective beam azimuth. The software compensates automatically — enter your current elevation at startup and the azimuth correction is applied to every logged return. Default coupling coefficient is 0.4°/degree of elevation (empirically adjustable in `run.py`).
+
+### Vehicle Mounting
+
+The dome mounts to a roof rack via its standard base. Orient so the MAIN/SEC F connectors face rearward — this places the motor's natural 0° position toward the front of the vehicle. Set elevation before mounting (check degree markings on dome base). Stow the dome (lay flat) when driving at highway speed — rated 35 mph maximum wind loading.
+
+### Field Deployment Checklist
+
+1. Park, orient vehicle North using compass app
+2. Set dish elevation using base markings, lock in place
+3. Connect power (2-pin connector), coax (MAIN and SEC), RS-485 (RJ-25)
+4. Run `python3 run.py`, enter elevation when prompted
+5. Open browser to `localhost:5000` or `radar.koakno.com`
+6. Monitor PPI display — alerts will sound if storm signatures detected
+
+---
+
+## Expected Performance
+
+### Detection Range
+
+| Target | Reverse-drive LNB (~1-5mW) | With Gunn oscillator TX (~4W) |
+|---|---|---|
+| Heavy downpour | 3–8 km | 15–40 km |
+| Supercell hail core | 8–15 km | 30–60 km |
+| Tornado debris ball | 10–20 km | 20–40 km |
+| Moderate rain | 1–3 km | 5–15 km |
+
+### Scan Performance
+
+| Mode | Time |
+|---|---|
+| Full 360° sweep | ~18 seconds (paced for accuracy) |
+| 90° sector scan | ~4.5 seconds |
+| NEXRAD comparison | Updates every 4–6 minutes |
+
+Sweep timing is deliberately paced slower than the motor's mechanical maximum (~10 seconds) to allow position verification at each step, ensuring logged returns correspond to confirmed dish positions rather than commanded positions.
+
+---
+
+## Licensing
+
+Transmitting at 10.4 GHz requires a minimum **Technician class amateur radio license** in the US. The 3cm band (10.0–10.5 GHz) is an amateur allocation.
+
+- 35 question multiple choice exam
+- ~$15 exam fee
+- Study free at [HamStudy.org](https://hamstudy.org)
+- Most people pass with 1–2 weeks of casual study
+- Also enables APRS position reporting and VHF/UHF voice comms with other chasers
+
+---
+
+## Safety
+
+> ⚠️ This system is for observing severe weather from a safe distance. Never attempt to intercept or approach a tornado. Always maintain a viable escape route. Monitor NWS warnings alongside your own radar data. Your radar provides local situational awareness — NWS provides the authoritative forecast and warning.
+
+> ⚠️ The dome is rated to 35 mph wind loading. Stow it when driving at highway speed. Do not operate during hail.
+
+---
+
+## Credits
+
+**SaveItForParts** — whose Carryout-Radio-Telescope project reverse engineered the GM-5000 RS-485 motor control protocol and proved the concept of using this dome as an RF imager. This project would not exist without that work.
+
+- [Carryout-Radio-Telescope](https://github.com/saveitforparts/Carryout-Radio-Telescope)
+- [Carryout-Rotor](https://github.com/saveitforparts/Carryout-Rotor)
+- [YouTube: Winegard Carryout teardown](https://youtu.be/QkvNH-tuAOo)
+- [YouTube: Microwave imaging with hacked TV dish](https://youtube.com/watch?v=lVOTZxNCgTM)
+
+---
+
+## Resources
+
+| Resource | Link |
+|---|---|
+| GNU Radio | gnuradio.org |
+| RTL-SDR drivers | rtl-sdr.com |
+| HamStudy (license exam) | hamstudy.org |
+| NWS Indianapolis SKYWARN | weather.gov/ind/skywarn |
+| Spotter Network | spotternetwork.org |
+
+---
+
+## Version History
+
+| Version | Date | Notes |
+|---|---|---|
+| v1.0 | 2026-06-22 | Initial hardware confirmation and signal chain documentation |
+| v2.0 | 2026-07-05 | Full modular software stack, Flask web interface, offline Indiana map, alert system, GPS integration, session recording, replay system, LoRa bridge, transit mode, elevation correction, Termux compatibility confirmed |
+
+---
+
+*Built in Kokomo, Indiana — tornado country. If this helps one person get better warning of an incoming storm it was worth building.*
