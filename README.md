@@ -432,3 +432,5 @@ Transmitting at 10.4 GHz requires a minimum **Technician class amateur radio lic
 ---
 
 *Built in Kokomo, Indiana — tornado country. If this helps one person get better warning of an incoming storm it was worth building.*
+
+*Note - this project was mostly human-made and Hands-On, AI was used in the involvement of cleaning up code that was messy and polishing it up, AI had no part and designing building or fabricating the code or Hardware used, this was all done of my Accord because I nearly got killed by a tornado that nextrad could not see*
