@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Portable Weather Radar - SIMULATOR</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: #0a0a0c;
+            color: #e2e8f0;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            padding: 15px;
+        }
+        #radar-container {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle, #111318 0%, #07080a 100%);
+            border: 1px solid #232936;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        canvas { position: absolute; max-width: 95%; max-height: 95%; }
+        #simBanner {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(168,85,247,0.15);
+            border: 1px solid #a855f7;
+            color: #d8b4fe;
+            font-size: 11px;
+            letter-spacing: 1px;
+            padding: 4px 14px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            z-index: 5;
+        }
+        #sidebar {
+            width: 380px;
+            margin-left: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+        }
+        .widget {
+            background-color: #12141c;
+            border: 1px solid #1f2430;
+            border-radius: 4px;
+            padding: 12px;
+        }
+        .widget-title {
+            font-size: 11px;
+            font-weight: bold;
+            color: #8a97ac;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            border-bottom: 1px solid #1f2430;
+            padding-bottom: 4px;
+        }
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .metric-val { color: #38bdf8; font-weight: bold; }
+
+        .color-bar-container { display: flex; flex-direction: column; gap: 2px; }
+        .color-row { display: flex; align-items: center; font-size: 11px; height: 16px; }
+        .color-box { width: 30px; height: 100%; margin-right: 10px; border-radius: 1px; }
+
+        .alert-item {
+            padding: 6px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            margin-bottom: 6px;
+            border-left: 4px solid #fff;
+        }
+        .DANGER  { background: rgba(239,68,68,0.15);  border-color: #ef4444; color: #fca5a5; }
+        .WARNING { background: rgba(245,158,11,0.15); border-color: #f59e0b; color: #fde047; }
+        .CAUTION { background: rgba(234,179,8,0.15);  border-color: #eab308; color: #fef08a; }
+        .INFO    { background: rgba(56,189,248,0.15); border-color: #38bdf8; color: #bae6fd; }
+        .TRACK   { background: rgba(168,85,247,0.15); border-color: #a855f7; color: #d8b4fe; }
+
+        .status-on  { color: #4ade80; font-weight: bold; }
+        .status-off { color: #f87171; font-weight: bold; }
+
+        .simBtnRow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+        .simBtn {
+            flex: 1;
+            background: #1a1e29;
+            border: 1px solid #2a3040;
+            color: #b7c0d0;
+            font-family: inherit;
+            font-size: 11px;
+            padding: 6px 4px;
+            border-radius: 3px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+        .simBtn:hover { background: #232936; }
+        .simBtn.active { background: rgba(56,189,248,0.2); border-color: #38bdf8; color: #bae6fd; }
+        .simBtn.toggleOn { background: rgba(255,136,0,0.2); border-color: #FF8800; color: #ffcc99; }
+        .simNote { font-size: 11px; color: #5a6478; line-height: 1.5; }
+    </style>
+</head>
+<body>
+
+    <div id="radar-container">
+        <div id="simBanner">Simulated Data - No Hardware Connected</div>
+        <canvas id="gridCanvas" width="800" height="800"></canvas>
+        <canvas id="radarCanvas" width="800" height="800"></canvas>
+    </div>
+
+    <div id="sidebar">
+        <div class="widget">
+            <div class="widget-title">Simulation Controls</div>
+            <div class="simBtnRow">
+                <button class="simBtn active" data-speed="1" onclick="setSimSpeed(1, this)">1x</button>
+                <button class="simBtn" data-speed="5" onclick="setSimSpeed(5, this)">5x</button>
+                <button class="simBtn" data-speed="20" onclick="setSimSpeed(20, this)">20x</button>
+            </div>
+            <div class="simBtnRow">
+                <button class="simBtn" id="drivingBtn" onclick="toggleDriving()">Simulate Vehicle Moving</button>
+                <button class="simBtn" onclick="resetSimulation()">Reset / New Storm</button>
+            </div>
+            <div class="simNote">
+                Same alert thresholds and storm-track/cone math as radar_scanner.py + gps.py, just ported to JS. Storm cells and GPS are fake, SDR/motor show OFFLINE since nothing's plugged in. "Simulate Vehicle Moving" tests transit mode the same way driving with the real rig does.
+            </div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">Reflectivity Spectrum (dBZ)</div>
+            <div class="color-bar-container">
+                <div class="color-row"><div class="color-box" style="background:#ff00ff"></div><span>&ge; 70 Extreme / Hail</span></div>
+                <div class="color-row"><div class="color-box" style="background:#ff0000"></div><span>60 - 70 Heavy Core</span></div>
+                <div class="color-row"><div class="color-box" style="background:#ff8800"></div><span>50 - 60 Heavy Rain</span></div>
+                <div class="color-row"><div class="color-box" style="background:#ffff00"></div><span>30 - 50 Mod. Rain</span></div>
+                <div class="color-row"><div class="color-box" style="background:#00cc00"></div><span>10 - 30 Light Rain</span></div>
+                <div class="color-row"><div class="color-box" style="background:#00ffff"></div><span>&lt; 10 Clear Air</span></div>
+            </div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">Scan Control Stream</div>
+            <div class="metric-row"><span>Sweep Count:</span><span class="metric-val" id="lblSweep">-</span></div>
+            <div class="metric-row"><span>Dish Azimuth:</span><span class="metric-val" id="lblAz">-</span></div>
+            <div class="metric-row"><span>Elevation:</span><span class="metric-val" id="lblElev">-</span></div>
+            <div class="metric-row"><span>Elev Mode:</span><span class="metric-val" id="lblElevMode">-</span></div>
+            <div class="metric-row"><span>Az Correction:</span><span class="metric-val" id="lblAzCorr">-</span></div>
+            <div class="metric-row"><span>Scan Mode:</span><span class="metric-val" id="lblScanMode">-</span></div>
+            <div class="metric-row"><span>Speed:</span><span class="metric-val" id="lblSpeed">-</span></div>
+            <div class="metric-row"><span>Radar Radius:</span><span class="metric-val">20 km</span></div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">Automated Alert Feed</div>
+            <div id="alertBox"></div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">GPS Coordinates (NMEA)</div>
+            <div class="metric-row"><span>Latitude:</span><span class="metric-val" id="lblLat">-</span></div>
+            <div class="metric-row"><span>Longitude:</span><span class="metric-val" id="lblLon">-</span></div>
+            <div class="metric-row"><span>Altitude:</span><span class="metric-val" id="lblAlt">-</span></div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">Hardware Status Matrix</div>
+            <div class="metric-row"><span>SDR / Transceiver:</span><span id="statSDR">-</span></div>
+            <div class="metric-row"><span>Dish Servo Serial:</span><span id="statMotor">-</span></div>
+            <div class="metric-row"><span>USB GPS Receiver:</span><span id="statGPS">-</span></div>
+        </div>
+    </div>
+
+    <script>
+        // geometry helpers, same math as radar_scanner.py
+        const EARTH_RADIUS_KM = 6371.0;
+        const COMPASS_POINTS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+
+        function bearingDistanceKm(lat1, lon1, lat2, lon2) {
+            const phi1 = lat1 * Math.PI/180, phi2 = lat2 * Math.PI/180;
+            const dphi = (lat2-lat1) * Math.PI/180;
+            const dlambda = (lon2-lon1) * Math.PI/180;
+            const a = Math.sin(dphi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dlambda/2)**2;
+            const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            const distanceKm = EARTH_RADIUS_KM * c;
+            const y = Math.sin(dlambda)*Math.cos(phi2);
+            const x = Math.cos(phi1)*Math.sin(phi2) - Math.sin(phi1)*Math.cos(phi2)*Math.cos(dlambda);
+            const bearingDeg = (Math.atan2(y,x)*180/Math.PI + 360) % 360;
+            return [bearingDeg, distanceKm];
+        }
+
+        function projectLatLon(lat, lon, bearingDeg, distanceKm) {
+            const phi1 = lat*Math.PI/180, lambda1 = lon*Math.PI/180, theta = bearingDeg*Math.PI/180;
+            const delta = distanceKm / EARTH_RADIUS_KM;
+            const phi2 = Math.asin(Math.sin(phi1)*Math.cos(delta) + Math.cos(phi1)*Math.sin(delta)*Math.cos(theta));
+            const lambda2 = lambda1 + Math.atan2(
+                Math.sin(theta)*Math.sin(delta)*Math.cos(phi1),
+                Math.cos(delta) - Math.sin(phi1)*Math.sin(phi2)
+            );
+            return [phi2*180/Math.PI, ((lambda2*180/Math.PI + 540) % 360) - 180];
+        }
+
+        function bearingToCompass(deg) {
+            return COMPASS_POINTS[Math.floor((deg + 11.25) / 22.5) % 16];
+        }
+
+        const round1 = n => Math.round(n*10)/10;
+        const round2 = n => Math.round(n*100)/100;
+
+        // mirrors config.py
+        const CFG = {
+            AZIMUTH_STEP: 2,
+            DWELL_TIME_MS: 50,
+            MAX_RANGE_KM: 20,
+            SIGNAL_THRESHOLD: 0.15,
+            MOVEMENT_SPEED_THRESHOLD_MPH: 2.0,
+            TRANSIT_MODE_AZIMUTH: 0,
+            SCAN_START_DEG: 0,
+            SCAN_END_DEG: 360,
+            MANUAL_LAT: 40.4864,
+            MANUAL_LON: -86.1336,
+            MANUAL_ALT: 248,
+            DRIVING_SPEED_MPH: 45,
+            DRIVING_HEADING_DEG: 20
+        };
+
+        // mirrors radar_scanner.py's self.state, so updateSidebar/renderFrame/
+        // drawStormCone below are the same code as the real index.html
+        let state, cells, cellHistory, slots, simClockMs, driving, simSpeed;
+
+        function freshState() {
+            return {
+                current_azimuth: 0,
+                sweep_count: 0,
+                returns: [],
+                system: { sdr: false, sdr_backend: null, motor: false, gps: true },
+                location: { lat: CFG.MANUAL_LAT, lon: CFG.MANUAL_LON, alt: CFG.MANUAL_ALT },
+                alerts: [],
+                speed_mph: 0.0,
+                scan_mode: "scan",
+                elevation_deg: "auto",
+                elevation_mode: "auto",
+                az_correction: 0,
+                storm_track: { heading_deg: null, compass: null, speed_kmh: null, speed_mph: null, cone_half_angle_deg: null, projection: [] }
+            };
+        }
+
+        function makeCell(distKm, bearingDeg, headingDeg, speedKmh, coreStrength, radiusKm, wobble) {
+            const [lat, lon] = projectLatLon(state.location.lat, state.location.lon, bearingDeg, distKm);
+            return { lat, lon, headingDeg, speedKmh, coreStrength, radiusKm, wobble };
+        }
+
+        function resetSimulation() {
+            state = freshState();
+            // cell 1 drifts toward the site -- triggers the full
+            // INFO->CAUTION->WARNING->DANGER chain then passes through.
+            // cell 2 is a weaker trailing one for a fuller-looking scope
+            cells = [
+                makeCell(16, 250, 70, 45, 0.9, 2.5, 8),
+                makeCell(10, 230, 75, 40, 0.55, 3.0, 10)
+            ];
+            cellHistory = [];
+            slots = new Array(180).fill(null).map(() => []);
+            simClockMs = 0;
+        }
+
+        // stands in for sdr.py's range-profile capture -- points clustered
+        // around each cell, falling off with angle/range
+        function generateReturnsForAzimuth(az) {
+            const pts = [];
+            const site = state.location;
+            cells.forEach(cell => {
+                const [bearing, distKm] = bearingDistanceKm(site.lat, site.lon, cell.lat, cell.lon);
+                if (distKm > CFG.MAX_RANGE_KM + cell.radiusKm) return;
+                const angularRadiusDeg = Math.max(3, Math.atan2(cell.radiusKm, Math.max(distKm, 0.3)) * 180/Math.PI);
+                const angDiff = Math.abs(((az - bearing + 540) % 360) - 180);
+                if (angDiff > angularRadiusDeg * 1.4) return;
+                const coverage = 1 - (angDiff / (angularRadiusDeg * 1.4));
+                const numPts = Math.max(1, Math.round(coverage * 6));
+                for (let i = 0; i < numPts; i++) {
+                    const rangeJitter = (Math.random() - 0.5) * cell.radiusKm * 1.3;
+                    const rng = Math.max(0.2, distKm + rangeJitter);
+                    const falloff = Math.max(0, 1 - Math.abs(rangeJitter) / (cell.radiusKm * 1.3));
+                    const strength = Math.min(1, cell.coreStrength * falloff * (0.6 + 0.4*coverage) * (0.85 + Math.random()*0.3));
+                    if (strength >= CFG.SIGNAL_THRESHOLD) pts.push([round1(az), round2(rng), round2(strength)]);
+                }
+            });
+            if (Math.random() < 0.03) {
+                pts.push([round1(az), round2(Math.random() * CFG.MAX_RANGE_KM), round2(0.15 + Math.random()*0.1)]);
+            }
+            return pts;
+        }
+
+        // same math as radar_scanner.py's update_storm_track()
+        function updateStormTrack(strongReturns) {
+            const site = state.location;
+            if (strongReturns.length < 5) return;
+
+            const avgAz = strongReturns.reduce((s,r) => s+r[0], 0) / strongReturns.length;
+            const avgRange = strongReturns.reduce((s,r) => s+r[1], 0) / strongReturns.length;
+            const [cellLat, cellLon] = projectLatLon(site.lat, site.lon, avgAz, avgRange);
+            cellHistory.push({ t: simClockMs, lat: cellLat, lon: cellLon });
+            if (cellHistory.length > 6) cellHistory.shift();
+            if (cellHistory.length < 2) return;
+
+            const p0 = cellHistory[cellHistory.length-2], p1 = cellHistory[cellHistory.length-1];
+            const dtHr = (p1.t - p0.t) / 3600000;
+            if (dtHr <= 0) return;
+
+            const [headingDeg, legKm] = bearingDistanceKm(p0.lat, p0.lon, p1.lat, p1.lon);
+            const speedKmh = legKm / dtHr;
+
+            const bearings = [];
+            for (let i = 1; i < cellHistory.length; i++) {
+                bearings.push(bearingDistanceKm(cellHistory[i-1].lat, cellHistory[i-1].lon, cellHistory[i].lat, cellHistory[i].lon)[0]);
+            }
+            let wobble = 15.0;
+            if (bearings.length >= 2) {
+                const diffs = [];
+                for (let i = 1; i < bearings.length; i++) diffs.push(Math.abs(((bearings[i]-bearings[i-1]+180)%360)-180));
+                wobble = diffs.reduce((a,b) => a+b, 0) / diffs.length;
+            }
+            const coneHalf = Math.min(45, 6.0 + wobble * 1.5);
+
+            const projection = [5, 10, 15, 20].map(minutes => {
+                const projKm = speedKmh * (minutes/60);
+                const [pLat, pLon] = projectLatLon(p1.lat, p1.lon, headingDeg, projKm);
+                const [pAz, pRange] = bearingDistanceKm(site.lat, site.lon, pLat, pLon);
+                return { minutes, az: round1(pAz), range: round2(pRange), cone_half_angle: round1(coneHalf * (minutes/20)) };
+            });
+
+            state.storm_track = {
+                heading_deg: round1(headingDeg),
+                compass: bearingToCompass(headingDeg),
+                speed_kmh: round1(speedKmh),
+                speed_mph: round1(speedKmh * 0.621371),
+                cone_half_angle_deg: round1(coneHalf),
+                projection
+            };
+        }
+
+        // same logic as radar_scanner.py's process_alerts()
+        function processAlerts(returns) {
+            const alerts = [];
+            const strong = returns.filter(r => r[2] > 0.5);
+            const extreme = returns.filter(r => r[2] > 0.75);
+
+            updateStormTrack(strong);
+            const track = state.storm_track;
+
+            if (returns.length > 10) {
+                const closest = returns.reduce((a,b) => a[1]<b[1]?a:b);
+                alerts.push({ type: "INFO", msg: "Precipitation detected", range: `${closest[1].toFixed(1)} km`, az: `${closest[0]}°` });
+            }
+            if (strong.length) {
+                const maxR = strong.reduce((a,b) => a[2]>b[2]?a:b);
+                alerts.push({ type: "CAUTION", msg: "Storm core in range", range: `${maxR[1].toFixed(1)} km`, az: `${maxR[0]}°` });
+            }
+            if (strong.length > 40) {
+                const avgAz = strong.reduce((s,r) => s+r[0], 0) / strong.length;
+                const avgRange = strong.reduce((s,r) => s+r[1], 0) / strong.length;
+                alerts.push({ type: "WARNING", msg: "Supercell signatures identified", range: `${avgRange.toFixed(1)} km`, az: `${avgAz.toFixed(0)}°` });
+            }
+            if (extreme.length) {
+                const maxEx = extreme.reduce((a,b) => a[2]>b[2]?a:b);
+                if (maxEx[1] < 6.0) alerts.push({ type: "DANGER", msg: "Severe cell / Core within 5km zone", range: `${maxEx[1].toFixed(1)} km`, az: `${maxEx[0]}°` });
+            }
+            if (track.heading_deg !== null) {
+                alerts.push({
+                    type: "TRACK",
+                    msg: `Storm tracking ${track.compass} at ${track.speed_mph} mph (±${track.cone_half_angle_deg}° cone)`,
+                    range: `${track.speed_mph} mph`,
+                    az: `${track.heading_deg}°`
+                });
+            }
+            state.alerts = alerts.reverse();
+        }
+
+        // world motion (cells + vehicle) runs on its own clock, separate
+        // from the azimuth sweep -- same as the real system
+        let lastWorldTs = null;
+        function worldTick(nowMs) {
+            if (lastWorldTs === null) lastWorldTs = nowMs;
+            const realDeltaMs = nowMs - lastWorldTs;
+            lastWorldTs = nowMs;
+            const simDeltaMs = realDeltaMs * simSpeed;
+            simClockMs += simDeltaMs;
+
+            cells.forEach(cell => {
+                cell.headingDeg += (Math.random() - 0.5) * cell.wobble * 0.15;
+                const distKm = cell.speedKmh * (simDeltaMs / 3600000);
+                const [nlat, nlon] = projectLatLon(cell.lat, cell.lon, cell.headingDeg, distKm);
+                cell.lat = nlat; cell.lon = nlon;
+            });
+
+            if (driving) {
+                const distKm = (CFG.DRIVING_SPEED_MPH * 1.60934) * (simDeltaMs / 3600000);
+                const [nlat, nlon] = projectLatLon(state.location.lat, state.location.lon, CFG.DRIVING_HEADING_DEG, distKm);
+                state.location.lat = nlat;
+                state.location.lon = nlon;
+                state.speed_mph = CFG.DRIVING_SPEED_MPH;
+            } else {
+                state.speed_mph = 0.0;
+            }
+        }
+
+        let sweepTimerId = null;
+        function scheduleScanTick() {
+            if (sweepTimerId) clearTimeout(sweepTimerId);
+            const interval = Math.max(5, CFG.DWELL_TIME_MS / simSpeed);
+            sweepTimerId = setTimeout(() => { scanTick(); scheduleScanTick(); }, interval);
+        }
+
+        function scanTick() {
+            worldTick(performance.now());
+
+            if (driving) {
+                state.scan_mode = "transit";
+                state.current_azimuth = CFG.TRANSIT_MODE_AZIMUTH;
+                const forwardReturns = generateReturnsForAzimuth(CFG.TRANSIT_MODE_AZIMUTH)
+                    .filter(() => true); // forward-only capture, same shape as real transit branch
+                state.returns = forwardReturns;
+                processAlerts(forwardReturns);
+                return;
+            }
+
+            state.scan_mode = "scan";
+            let az = state.current_azimuth + CFG.AZIMUTH_STEP;
+            if (az >= CFG.SCAN_END_DEG) {
+                az = CFG.SCAN_START_DEG;
+                state.sweep_count++;
+                state.returns = slots.flat();
+                processAlerts(state.returns);
+            }
+            state.current_azimuth = az;
+            const slotIdx = Math.floor(az / CFG.AZIMUTH_STEP) % slots.length;
+            slots[slotIdx] = generateReturnsForAzimuth(az);
+            state.returns = slots.flat();
+        }
+
+        function setSimSpeed(speed, btn) {
+            simSpeed = speed;
+            document.querySelectorAll('[data-speed]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+
+        function toggleDriving() {
+            driving = !driving;
+            const btn = document.getElementById('drivingBtn');
+            btn.classList.toggle('toggleOn', driving);
+            btn.textContent = driving ? "Stop Vehicle (resume scan)" : "Simulate Vehicle Moving";
+        }
+
+        // same canvas code as templates/index.html
+        const gridCanvas = document.getElementById('gridCanvas');
+        const radarCanvas = document.getElementById('radarCanvas');
+        const gctx = gridCanvas.getContext('2d');
+        const ctx = radarCanvas.getContext('2d');
+        const cx = 400, cy = 400, rMax = 380;
+
+        function drawRadarScopeGrid() {
+            gctx.clearRect(0, 0, 800, 800);
+            gctx.strokeStyle = "rgba(35, 41, 54, 0.6)";
+            gctx.lineWidth = 1;
+
+            for (let i = 1; i <= 4; i++) {
+                let radius = (rMax / 4) * i;
+                gctx.beginPath();
+                gctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+                gctx.stroke();
+                gctx.fillStyle = "#4a5568";
+                gctx.font = "10px monospace";
+                gctx.fillText(`${i * 5}km`, cx + radius - 35, cy - 6);
+            }
+
+            gctx.beginPath(); gctx.moveTo(cx, cy - rMax); gctx.lineTo(cx, cy + rMax); gctx.stroke();
+            gctx.beginPath(); gctx.moveTo(cx - rMax, cy); gctx.lineTo(cx + rMax, cy); gctx.stroke();
+
+            gctx.fillStyle = "#5a6478";
+            gctx.font = "12px monospace";
+            gctx.fillText("N", cx - 4, cy - rMax + 14);
+            gctx.fillText("S", cx - 4, cy + rMax - 6);
+            gctx.fillText("E", cx + rMax - 14, cy + 4);
+            gctx.fillText("W", cx - rMax + 4, cy + 4);
+        }
+
+        function getColorFromStrength(val) {
+            if (val > 0.75) return '#ff00ff';
+            if (val > 0.60) return '#ff0000';
+            if (val > 0.45) return '#ff8800';
+            if (val > 0.30) return '#ffff00';
+            if (val > 0.15) return '#00cc00';
+            return '#00ffff';
+        }
+
+        function updateSidebar(data) {
+            document.getElementById('lblSweep').innerText = data.sweep_count;
+            document.getElementById('lblAz').innerText = `${data.current_azimuth}°`;
+            document.getElementById('lblLat').innerText = `${data.location.lat.toFixed(5)}° N`;
+            document.getElementById('lblLon').innerText = `${data.location.lon.toFixed(5)}° W`;
+            document.getElementById('lblAlt').innerText = `${data.location.alt} m`;
+
+            const elev = data.elevation_deg;
+            document.getElementById('lblElev').innerText =
+                elev === "auto" ? "AUTO" :
+                elev !== undefined ? `${elev}°` : "-";
+            document.getElementById('lblElevMode').innerText =
+                data.elevation_mode === "auto" ? "Motor controlled" : "Manual (fixed)";
+
+            const corr = data.az_correction || 0;
+            document.getElementById('lblAzCorr').innerText =
+                corr === 0 ? "None" : `-${corr.toFixed(1)}°`;
+
+            const modeEl = document.getElementById('lblScanMode');
+            if (data.scan_mode === "transit") {
+                modeEl.innerHTML = '<span style="color:#FF8800">TRANSIT (dish fwd)</span>';
+            } else {
+                modeEl.innerHTML = '<span style="color:#4ade80">SCANNING</span>';
+            }
+
+            document.getElementById('lblSpeed').innerText =
+                data.speed_mph !== undefined ? `${data.speed_mph.toFixed(1)} mph` : "-";
+
+            document.getElementById('statSDR').innerHTML   = data.system.sdr ? `<span class="status-on">✔ ONLINE (${(data.system.sdr_backend || '').toUpperCase()})</span>`  : '<span class="status-off">✖ SIM MODE</span>';
+            document.getElementById('statMotor').innerHTML = data.system.motor  ? '<span class="status-on">✔ ACTIVE</span>'  : '<span class="status-off">✖ OFFLINE</span>';
+            document.getElementById('statGPS').innerHTML   = data.system.gps    ? '<span class="status-on">✔ LOCKED</span>'  : '<span class="status-off">✖ NO FIX / MAN</span>';
+
+            const alertBox = document.getElementById('alertBox');
+            alertBox.innerHTML = "";
+            if (data.alerts.length === 0) {
+                alertBox.innerHTML = '<div style="color:#4a5568;font-size:12px;">Monitoring clear airspace...</div>';
+            }
+            data.alerts.forEach(a => {
+                alertBox.innerHTML += `<div class="alert-item ${a.type}"><strong>[${a.type}]</strong> ${a.msg} (Az: ${a.az}, Rng: ${a.range})</div>`;
+            });
+        }
+
+        function drawStormCone(ctx, track) {
+            if (!track || !track.projection || track.projection.length === 0) return;
+            const projection = track.projection;
+
+            const leftPts = [];
+            const rightPts = [];
+            projection.forEach(p => {
+                const distancePixels = (p.range / 20.0) * rMax;
+                const leftAngleRad  = (p.az - p.cone_half_angle - 90) * Math.PI / 180.0;
+                const rightAngleRad = (p.az + p.cone_half_angle - 90) * Math.PI / 180.0;
+                leftPts.push({ x: cx + distancePixels * Math.cos(leftAngleRad), y: cy + distancePixels * Math.sin(leftAngleRad) });
+                rightPts.push({ x: cx + distancePixels * Math.cos(rightAngleRad), y: cy + distancePixels * Math.sin(rightAngleRad) });
+            });
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            leftPts.forEach(pt => ctx.lineTo(pt.x, pt.y));
+            for (let i = rightPts.length - 1; i >= 0; i--) ctx.lineTo(rightPts[i].x, rightPts[i].y);
+            ctx.closePath();
+            ctx.fillStyle = "rgba(168, 85, 247, 0.12)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(168, 85, 247, 0.5)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            ctx.strokeStyle = "rgba(216, 180, 254, 0.6)";
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            projection.forEach(p => {
+                const distancePixels = (p.range / 20.0) * rMax;
+                const angleRad = (p.az - 90) * Math.PI / 180.0;
+                ctx.lineTo(cx + distancePixels * Math.cos(angleRad), cy + distancePixels * Math.sin(angleRad));
+            });
+            ctx.stroke();
+
+            ctx.fillStyle = "#d8b4fe";
+            ctx.font = "10px 'Courier New', monospace";
+            projection.forEach(p => {
+                const distancePixels = (p.range / 20.0) * rMax;
+                const angleRad = (p.az - 90) * Math.PI / 180.0;
+                const x = cx + distancePixels * Math.cos(angleRad);
+                const y = cy + distancePixels * Math.sin(angleRad);
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillText(`+${p.minutes}m`, x + 6, y - 6);
+            });
+        }
+
+        function renderFrame() {
+            const data = state;
+
+            ctx.clearRect(0, 0, 800, 800);
+
+            data.returns.forEach(pt => {
+                let angleRad       = (pt[0] - 90) * Math.PI / 180.0;
+                let distancePixels = (pt[1] / 20.0) * rMax;
+                ctx.fillStyle = getColorFromStrength(pt[2]);
+                ctx.beginPath();
+                ctx.arc(
+                    cx + distancePixels * Math.cos(angleRad),
+                    cy + distancePixels * Math.sin(angleRad),
+                    4, 0, 2 * Math.PI
+                );
+                ctx.fill();
+            });
+
+            let sweepRad = (data.current_azimuth - 90) * Math.PI / 180.0;
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.6)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + rMax * Math.cos(sweepRad), cy + rMax * Math.sin(sweepRad));
+            ctx.stroke();
+
+            drawStormCone(ctx, data.storm_track);
+
+            updateSidebar(data);
+            requestAnimationFrame(renderFrame);
+        }
+
+        simSpeed = 1;
+        driving = false;
+        resetSimulation();
+        drawRadarScopeGrid();
+        scheduleScanTick();
+        requestAnimationFrame(renderFrame);
+    </script>
+</body>
+</html>

@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Small Portable Weather Radar Terminal</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: #0a0a0c;
+            color: #e2e8f0;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            padding: 15px;
+        }
+        #radar-container {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle, #111318 0%, #07080a 100%);
+            border: 1px solid #232936;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        canvas { position: absolute; max-width: 95%; max-height: 95%; }
+        #sidebar {
+            width: 380px;
+            margin-left: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+        }
+        .widget {
+            background-color: #12141c;
+            border: 1px solid #1f2430;
+            border-radius: 4px;
+            padding: 12px;
+        }
+        .widget-title {
+            font-size: 11px;
+            font-weight: bold;
+            color: #8a97ac;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            border-bottom: 1px solid #1f2430;
+            padding-bottom: 4px;
+        }
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .metric-val { color: #38bdf8; font-weight: bold; }
+
+        .color-bar-container { display: flex; flex-direction: column; gap: 2px; }
+        .color-row { display: flex; align-items: center; font-size: 11px; height: 16px; }
+        .color-box { width: 30px; height: 100%; margin-right: 10px; border-radius: 1px; }
+
+        .alert-item {
+            padding: 6px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            margin-bottom: 6px;
+            border-left: 4px solid #fff;
+        }
+        .DANGER  { background: rgba(239,68,68,0.15);  border-color: #ef4444; color: #fca5a5; }
+        .WARNING { background: rgba(245,158,11,0.15); border-color: #f59e0b; color: #fde047; }
+        .CAUTION { background: rgba(234,179,8,0.15);  border-color: #eab308; color: #fef08a; }
+        .INFO    { background: rgba(56,189,248,0.15); border-color: #38bdf8; color: #bae6fd; }
+        .TRACK   { background: rgba(168,85,247,0.15); border-color: #a855f7; color: #d8b4fe; }
+
+        .status-on  { color: #4ade80; font-weight: bold; }
+        .status-off { color: #f87171; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="radar-container">
+        <canvas id="gridCanvas" width="800" height="800"></canvas>
+        <canvas id="radarCanvas" width="800" height="800"></canvas>
+    </div>
+
+    <div id="sidebar">
+        <div class="widget">
+            <div class="widget-title">Reflectivity Spectrum (dBZ)</div>
+            <div class="color-bar-container">
+                <div class="color-row"><div class="color-box" style="background:#ff00ff"></div><span>&ge; 70 Extreme / Hail</span></div>
+                <div class="color-row"><div class="color-box" style="background:#ff0000"></div><span>60 - 70 Heavy Core</span></div>
+                <div class="color-row"><div class="color-box" style="background:#ff8800"></div><span>50 - 60 Heavy Rain</span></div>
+                <div class="color-row"><div class="color-box" style="background:#ffff00"></div><span>30 - 50 Mod. Rain</span></div>
+                <div class="color-row"><div class="color-box" style="background:#00cc00"></div><span>10 - 30 Light Rain</span></div>
+                <div class="color-row"><div class="color-box" style="background:#00ffff"></div><span>&lt; 10 Clear Air</span></div>
+            </div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">Scan Control Stream</div>
+            <div class="metric-row"><span>Sweep Count:</span><span class="metric-val" id="lblSweep">-</span></div>
+            <div class="metric-row"><span>Dish Azimuth:</span><span class="metric-val" id="lblAz">-</span></div>
+            <div class="metric-row"><span>Elevation:</span><span class="metric-val" id="lblElev">-</span></div>
+            <div class="metric-row"><span>Elev Mode:</span><span class="metric-val" id="lblElevMode">-</span></div>
+            <div class="metric-row"><span>Az Correction:</span><span class="metric-val" id="lblAzCorr">-</span></div>
+            <div class="metric-row"><span>Scan Mode:</span><span class="metric-val" id="lblScanMode">-</span></div>
+            <div class="metric-row"><span>Speed:</span><span class="metric-val" id="lblSpeed">-</span></div>
+            <div class="metric-row"><span>Radar Radius:</span><span class="metric-val">{{ max_range }} km</span></div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">Automated Alert Feed</div>
+            <div id="alertBox"></div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">GPS Coordinates (NMEA)</div>
+            <div class="metric-row"><span>Latitude:</span><span class="metric-val" id="lblLat">-</span></div>
+            <div class="metric-row"><span>Longitude:</span><span class="metric-val" id="lblLon">-</span></div>
+            <div class="metric-row"><span>Altitude:</span><span class="metric-val" id="lblAlt">-</span></div>
+        </div>
+
+        <div class="widget">
+            <div class="widget-title">Hardware Status Matrix</div>
+            <div class="metric-row"><span>SDR / Transceiver:</span><span id="statSDR">-</span></div>
+            <div class="metric-row"><span>Dish Servo Serial:</span><span id="statMotor">-</span></div>
+            <div class="metric-row"><span>USB GPS Receiver:</span><span id="statGPS">-</span></div>
+        </div>
+    </div>
+
+    <script>
+        const gridCanvas = document.getElementById('gridCanvas');
+        const radarCanvas = document.getElementById('radarCanvas');
+        const gctx = gridCanvas.getContext('2d');
+        const ctx = radarCanvas.getContext('2d');
+        const cx = 400, cy = 400, rMax = 380;
+
+        // Offscreen canvas caches the map render so it only
+        // redraws when GPS position changes, not every 200ms frame
+        const mapCache = document.createElement('canvas');
+        mapCache.width = 800;
+        mapCache.height = 800;
+        const mctx = mapCache.getContext('2d');
+        let cachedMapLat = null;
+        let cachedMapLon = null;
+
+        // offline indiana map data
+        let indianaMapData  = null;
+        let indianaRoadsData = null;
+
+        // load both in parallel, only mark ready once both are in --
+        // otherwise you get a mid-render cache flip partway through a sweep
+        Promise.all([
+            fetch('/static/indiana_counties.geojson').then(r => r.json()),
+            fetch('/static/indiana_roads.geojson').then(r => r.json())
+        ]).then(([counties, roads]) => {
+            indianaMapData  = counties;
+            indianaRoadsData = roads;
+            cachedMapLat = null; // invalidate once, now that both are ready
+            console.log("Indiana map data fully loaded offline.");
+        }).catch(err => console.error("Error loading map data:", err));
+
+        function drawRadarScopeGrid() {
+            gctx.clearRect(0, 0, 800, 800);
+            gctx.strokeStyle = "rgba(35, 41, 54, 0.6)";
+            gctx.lineWidth = 1;
+
+            for (let i = 1; i <= 4; i++) {
+                let radius = (rMax / 4) * i;
+                gctx.beginPath();
+                gctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+                gctx.stroke();
+                gctx.fillStyle = "#4a5568";
+                gctx.font = "10px monospace";
+                gctx.fillText(`${i * 5}km`, cx + radius - 35, cy - 6);
+            }
+
+            gctx.beginPath(); gctx.moveTo(cx, cy - rMax); gctx.lineTo(cx, cy + rMax); gctx.stroke();
+            gctx.beginPath(); gctx.moveTo(cx - rMax, cy); gctx.lineTo(cx + rMax, cy); gctx.stroke();
+        }
+
+        function getColorFromStrength(val) {
+            if (val > 0.75) return '#ff00ff';
+            if (val > 0.60) return '#ff0000';
+            if (val > 0.45) return '#ff8800';
+            if (val > 0.30) return '#ffff00';
+            if (val > 0.15) return '#00cc00';
+            return '#00ffff';
+        }
+
+        function mapLatLonToPixels(lon, lat, carLon, carLat, centerX, centerY, pixelsPerKm) {
+            const kmPerDegreeLat = 111.132;
+            const kmPerDegreeLon = 111.132 * Math.cos(carLat * Math.PI / 180);
+            const xKm = (lon - carLon) * kmPerDegreeLon;
+            const yKm = (lat - carLat) * kmPerDegreeLat;
+            return {
+                x: centerX + (xKm * pixelsPerKm),
+                y: centerY - (yKm * pixelsPerKm)  // canvas Y is inverted
+            };
+        }
+
+        // draws to the offscreen cache canvas once per GPS position
+        // change, then just composites it each frame instead of
+        // redrawing the whole geojson every frame (was causing jumps)
+        function rebuildMapCache(carLon, carLat) {
+            mctx.clearRect(0, 0, 800, 800);
+            if (!indianaMapData && !indianaRoadsData) return;
+
+            const cleanLon = parseFloat(carLon) || -86.1336;
+            const cleanLat = parseFloat(carLat) || 40.4864;
+            const pixelsPerKm = rMax / 20;
+
+            const toPixel = (lon, lat) =>
+                mapLatLonToPixels(lon, lat, cleanLon, cleanLat, cx, cy, pixelsPerKm);
+
+            // Pass 1: County boundaries (green)
+            if (indianaMapData) {
+                mctx.strokeStyle = "rgba(0, 255, 0, 0.75)";
+                mctx.lineWidth = 1.2;
+
+                const drawPolygon = (coords) => {
+                    mctx.beginPath();
+                    coords.forEach((point, index) => {
+                        let px = toPixel(point[0], point[1]);
+                        if (index === 0) mctx.moveTo(px.x, px.y);
+                        else mctx.lineTo(px.x, px.y);
+                    });
+                    mctx.closePath();
+                    mctx.stroke();
+                };
+
+                indianaMapData.features.forEach(feature => {
+                    if (!feature.geometry) return;
+                    let testCoord = feature.geometry.coordinates[0][0];
+                    let testPx = toPixel(testCoord[0], testCoord[1]);
+                    if (testPx.x < -100 || testPx.x > 900 || testPx.y < -100 || testPx.y > 900) return;
+                    if (feature.geometry.type === "Polygon") {
+                        drawPolygon(feature.geometry.coordinates[0]);
+                    } else if (feature.geometry.type === "MultiPolygon") {
+                        feature.geometry.coordinates.forEach(poly => drawPolygon(poly[0]));
+                    }
+                });
+            }
+
+            // Pass 2: Roads (white)
+            if (indianaRoadsData) {
+                mctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+                mctx.lineWidth = 1.5;
+
+                const drawLineString = (coords) => {
+                    mctx.beginPath();
+                    coords.forEach((point, index) => {
+                        let px = toPixel(point[0], point[1]);
+                        if (index === 0) mctx.moveTo(px.x, px.y);
+                        else mctx.lineTo(px.x, px.y);
+                    });
+                    mctx.stroke();
+                };
+
+                indianaRoadsData.features.forEach(feature => {
+                    if (!feature.geometry) return;
+                    let testCoord = feature.geometry.type === "LineString"
+                        ? feature.geometry.coordinates[0]
+                        : feature.geometry.coordinates[0][0];
+                    let testPx = toPixel(testCoord[0], testCoord[1]);
+                    if (testPx.x < -100 || testPx.x > 900 || testPx.y < -100 || testPx.y > 900) return;
+                    if (feature.geometry.type === "LineString") {
+                        drawLineString(feature.geometry.coordinates);
+                    } else if (feature.geometry.type === "MultiLineString") {
+                        feature.geometry.coordinates.forEach(seg => drawLineString(seg));
+                    }
+                });
+            }
+
+            cachedMapLat = carLat;
+            cachedMapLon = carLon;
+        }
+
+        // Composite cached map onto radar canvas
+        // Only rebuilds the cache if position moved >0.001 degrees (~100m)
+        function drawOfflineMap(ctx, carLon, carLat, centerX, centerY, rMax) {
+            const posChanged = cachedMapLat === null ||
+                Math.abs(carLat - cachedMapLat) > 0.001 ||
+                Math.abs(carLon - cachedMapLon) > 0.001;
+
+            if (posChanged && (indianaMapData || indianaRoadsData)) {
+                rebuildMapCache(carLon, carLat);
+            }
+
+            if (cachedMapLat !== null) {
+                ctx.drawImage(mapCache, 0, 0);
+            }
+        }
+
+
+
+        // fetch and render are decoupled -- telemetry polls every 200ms,
+        // canvas redraws every rAF, so a slow fetch doesn't stutter the draw
+        let latestData = null;
+
+        async function fetchTelemetry() {
+            try {
+                let response = await fetch('/api/telemetry');
+                latestData = await response.json();
+                updateSidebar(latestData);
+            } catch (e) {
+                console.error("Communication loss with local radar telemetry API:", e);
+            }
+        }
+
+        function updateSidebar(data) {
+            document.getElementById('lblSweep').innerText = data.sweep_count;
+            document.getElementById('lblAz').innerText = `${data.current_azimuth}°`;
+            document.getElementById('lblLat').innerText = `${data.location.lat.toFixed(5)}° N`;
+            document.getElementById('lblLon').innerText = `${data.location.lon.toFixed(5)}° W`;
+            document.getElementById('lblAlt').innerText = `${data.location.alt} m`;
+
+            // Elevation display
+            const elev = data.elevation_deg;
+            document.getElementById('lblElev').innerText =
+                elev === "auto" ? "AUTO" :
+                elev !== undefined ? `${elev}°` : "-";
+            document.getElementById('lblElevMode').innerText =
+                data.elevation_mode === "auto" ? "Motor controlled" : "Manual (fixed)";
+
+            // Azimuth correction display
+            const corr = data.az_correction || 0;
+            document.getElementById('lblAzCorr').innerText =
+                corr === 0 ? "None" : `-${corr.toFixed(1)}°`;
+
+            // Scan mode with color
+            const modeEl = document.getElementById('lblScanMode');
+            if (data.scan_mode === "transit") {
+                modeEl.innerHTML = '<span style="color:#FF8800">TRANSIT (dish fwd)</span>';
+            } else {
+                modeEl.innerHTML = '<span style="color:#4ade80">SCANNING</span>';
+            }
+
+            // Speed
+            document.getElementById('lblSpeed').innerText =
+                data.speed_mph !== undefined ? `${data.speed_mph.toFixed(1)} mph` : "-";
+
+            document.getElementById('statSDR').innerHTML   = data.system.sdr ? `<span class="status-on">✔ ONLINE (${(data.system.sdr_backend || '').toUpperCase()})</span>`  : '<span class="status-off">✖ SIM MODE</span>';
+            document.getElementById('statMotor').innerHTML = data.system.motor  ? '<span class="status-on">✔ ACTIVE</span>'  : '<span class="status-off">✖ OFFLINE</span>';
+            document.getElementById('statGPS').innerHTML   = data.system.gps    ? '<span class="status-on">✔ LOCKED</span>'  : '<span class="status-off">✖ NO FIX / MAN</span>';
+
+            const alertBox = document.getElementById('alertBox');
+            alertBox.innerHTML = "";
+            if (data.alerts.length === 0) {
+                alertBox.innerHTML = '<div style="color:#4a5568;font-size:12px;">Monitoring clear airspace...</div>';
+            }
+            data.alerts.forEach(a => {
+                alertBox.innerHTML += `<div class="alert-item ${a.type}"><strong>[${a.type}]</strong> ${a.msg} (Az: ${a.az}, Rng: ${a.range})</div>`;
+            });
+        }
+
+        // projected storm track cone -- wedge + waypoint dots, using
+        // az/range already reprojected relative to the radar's current site
+        function drawStormCone(ctx, track) {
+            if (!track || !track.projection || track.projection.length === 0) return;
+            const projection = track.projection;
+
+            // Filled wedge: near->far along the cone's left edge,
+            // then far->near back along the right edge
+            const leftPts = [];
+            const rightPts = [];
+            projection.forEach(p => {
+                const distancePixels = (p.range / 20.0) * rMax;
+                const leftAngleRad  = (p.az - p.cone_half_angle - 90) * Math.PI / 180.0;
+                const rightAngleRad = (p.az + p.cone_half_angle - 90) * Math.PI / 180.0;
+                leftPts.push({
+                    x: cx + distancePixels * Math.cos(leftAngleRad),
+                    y: cy + distancePixels * Math.sin(leftAngleRad)
+                });
+                rightPts.push({
+                    x: cx + distancePixels * Math.cos(rightAngleRad),
+                    y: cy + distancePixels * Math.sin(rightAngleRad)
+                });
+            });
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            leftPts.forEach(pt => ctx.lineTo(pt.x, pt.y));
+            for (let i = rightPts.length - 1; i >= 0; i--) ctx.lineTo(rightPts[i].x, rightPts[i].y);
+            ctx.closePath();
+            ctx.fillStyle = "rgba(168, 85, 247, 0.12)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(168, 85, 247, 0.5)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Centerline through the projected track
+            ctx.strokeStyle = "rgba(216, 180, 254, 0.6)";
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            projection.forEach(p => {
+                const distancePixels = (p.range / 20.0) * rMax;
+                const angleRad = (p.az - 90) * Math.PI / 180.0;
+                ctx.lineTo(cx + distancePixels * Math.cos(angleRad), cy + distancePixels * Math.sin(angleRad));
+            });
+            ctx.stroke();
+
+            // Waypoint dots labeled with minutes-ahead
+            ctx.fillStyle = "#d8b4fe";
+            ctx.font = "10px 'Courier New', monospace";
+            projection.forEach(p => {
+                const distancePixels = (p.range / 20.0) * rMax;
+                const angleRad = (p.az - 90) * Math.PI / 180.0;
+                const x = cx + distancePixels * Math.cos(angleRad);
+                const y = cy + distancePixels * Math.sin(angleRad);
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillText(`+${p.minutes}m`, x + 6, y - 6);
+            });
+        }
+
+        function renderFrame() {
+            if (latestData) {
+                const data = latestData;
+                const currentLon = data.location.lon || -86.1336;
+                const currentLat = data.location.lat || 40.4864;
+
+                ctx.clearRect(0, 0, 800, 800);
+                drawOfflineMap(ctx, currentLon, currentLat, cx, cy, rMax);
+
+                data.returns.forEach(pt => {
+                    let angleRad       = (pt[0] - 90) * Math.PI / 180.0;
+                    let distancePixels = (pt[1] / 20.0) * rMax;
+                    ctx.fillStyle = getColorFromStrength(pt[2]);
+                    ctx.beginPath();
+                    ctx.arc(
+                        cx + distancePixels * Math.cos(angleRad),
+                        cy + distancePixels * Math.sin(angleRad),
+                        4, 0, 2 * Math.PI
+                    );
+                    ctx.fill();
+                });
+
+                let sweepRad = (data.current_azimuth - 90) * Math.PI / 180.0;
+                ctx.strokeStyle = "rgba(56, 189, 248, 0.6)";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(cx + rMax * Math.cos(sweepRad), cy + rMax * Math.sin(sweepRad));
+                ctx.stroke();
+
+                drawStormCone(ctx, data.storm_track);
+            }
+            requestAnimationFrame(renderFrame);
+        }
+
+        drawRadarScopeGrid();
+        setInterval(fetchTelemetry, 200);
+        requestAnimationFrame(renderFrame);
+    </script>
+</body>
+</html>
