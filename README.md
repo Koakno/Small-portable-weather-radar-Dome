@@ -1,3 +1,8 @@
+important notice - this is a prototype/testing system, it is not meant to be used in the real world at the moment and is currently in violation of several FCC laws, it is hard but I am currently working out a way to use fmcw as my SDR supports full duplex, please do not try this at home with the hardware, but if you would like to try the software I do plan on releasing a version that's not zipped up but I'm trying to fix the software first, and because it stated all the way at the very bottom of this read me, AI was used in this but not to completely create it, it was used for polishing and because I suck at writing paragraphs, the code the hard work and the numbers were all crunched by me and a piece of paper, it's taken well over 2 months to get this far, and I'm still learning along the way. and feel free to give me any suggestions, comments or criticism
+
+
+
+
 # Small Portable Weather Radar
 
 > A self-contained mobile weather radar project built from a $5 salvaged RV satellite dome, a cheap SDR, and open source software. No internet required, no subscription, no NWS data dependency — your own radar returns, updated locally.
