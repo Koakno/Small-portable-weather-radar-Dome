@@ -36,6 +36,27 @@ class USBGPSInterface(threading.Thread):
             self.connected = False
             return False
 
+    def _checksum_ok(self, line):
+        """
+        Validates the NMEA checksum (XOR of all chars between '$' and
+        '*', compared against the two hex digits after '*'). Serial
+        glitches / mid-sentence corruption drop or flip bytes, which
+        would otherwise get parsed into a bogus position -- this
+        rejects any sentence that doesn't check out.
+        """
+        if not line.startswith('$') or '*' not in line:
+            return False
+        body, _, checksum_hex = line[1:].partition('*')
+        if len(checksum_hex) < 2:
+            return False
+        calc = 0
+        for ch in body:
+            calc ^= ord(ch)
+        try:
+            return calc == int(checksum_hex[:2], 16)
+        except ValueError:
+            return False
+
     def _convert_nmea_to_decimal(self, value, direction):
         """Converts NMEA raw DDMM.MMMMM representation to signed Decimal Degrees."""
         if not value or not direction:
@@ -68,7 +89,10 @@ class USBGPSInterface(threading.Thread):
                     while '\r\n' in raw_buffer:
                         line, raw_buffer = raw_buffer.split('\r\n', 1)
                         line = line.strip()
-                        
+
+                        if not line or not self._checksum_ok(line):
+                            continue
+
                         # Process Lat/Lon coordinates
                         if line.startswith(('$GPRMC', '$GNRMC')):
                             elements = line.split(',')
@@ -88,6 +112,10 @@ class USBGPSInterface(threading.Thread):
                                         self.course_deg = float(elements[8])
                                     except ValueError:
                                         pass
+                            elif len(elements) > 2 and elements[2] == 'V':
+                                # 'V' = void/no fix -- don't leave stale
+                                # LOCKED status showing on the UI
+                                self.has_fix = False
 
                         # Process Altitude coordinates
                         elif line.startswith(('$GPGGA', '$GNGGA')):
@@ -100,6 +128,9 @@ class USBGPSInterface(threading.Thread):
                                     self.alt = float(elements[9])
                                 except ValueError:
                                     pass
+                            elif len(elements) > 6 and elements[6] == '0':
+                                # fix quality 0 = invalid
+                                self.has_fix = False
                 else:
                     time.sleep(0.1)
             except Exception as e:

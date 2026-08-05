@@ -40,7 +40,19 @@ class CarryoutMotor:
             self.ser.close()
         self.connected = False
 
-    def _send_command(self, cmd, data=None):
+    def _send_command(self, cmd, data=None, reply_timeout=0.05):
+        """
+        Returns the raw reply bytes on a successful write (which may be
+        b'' if the controller acked with zero payload -- that is NOT a
+        failure), or None only if the write itself failed / we aren't
+        connected. Callers must check `is None`, not truthiness, to
+        tell a real failure from an empty-but-valid reply.
+
+        Polls for up to reply_timeout instead of blocking on
+        ser.read()'s full connection-level timeout, so a controller
+        that never answers only stalls this step by ~reply_timeout
+        (default 50ms) instead of the full 1s serial timeout.
+        """
         if not self.connected or not self.ser:
             return None
         with self._lock:
@@ -51,8 +63,14 @@ class CarryoutMotor:
                 checksum = sum(packet[2:]) & 0xFF
                 packet.append(checksum)
                 self.ser.write(packet)
-                time.sleep(0.02)
-                return self.ser.read(self.ser.in_waiting or 8)
+
+                deadline = time.time() + reply_timeout
+                while time.time() < deadline and self.ser.in_waiting == 0:
+                    time.sleep(0.005)
+
+                if self.ser.in_waiting:
+                    return self.ser.read(self.ser.in_waiting)
+                return b''
             except Exception as e:
                 print(f"[Motor] Serial transmission failure: {e}")
                 return None
@@ -76,7 +94,7 @@ class CarryoutMotor:
         degrees = degrees % 360
         position = int(degrees * 10)
         data = struct.pack(">H", position)
-        if not self._send_command(self.CMD_MOVE_AZ, data):
+        if self._send_command(self.CMD_MOVE_AZ, data) is None:
             return False
 
         self.current_azimuth = degrees
@@ -114,7 +132,17 @@ class CarryoutMotor:
         """
         az = start_deg
         going_up = step_deg > 0
+
+        # A full 360 sweep has start_deg/end_deg 360 apart (e.g. 0->360),
+        # but 0 and 360 are the same physical bearing. Sampling both
+        # double-counts one azimuth per revolution, so on a full-circle
+        # sweep we stop one step short of end_deg instead of landing on
+        # the duplicate.
+        full_circle = abs(end_deg - start_deg) >= 360
+
         while (going_up and az <= end_deg) or (not going_up and az >= end_deg):
+            if full_circle and az == end_deg:
+                break
             self.move_to_azimuth(az)
 
             confirmed = False
@@ -134,7 +162,7 @@ class CarryoutMotor:
 
     def home(self):
         print("[Motor] Calibrating dish to home index marker...")
-        if self._send_command(self.CMD_HOME):
+        if self._send_command(self.CMD_HOME) is not None:
             self.current_azimuth = 0.0
             time.sleep(4)
             return True

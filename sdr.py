@@ -236,6 +236,37 @@ class RadarSDR:
             print(f"[SDR] HackRF initialization failure: {e}")
             return False
 
+    def close(self):
+        """
+        Tears down whichever backend is active. Previously nothing
+        called into the SDR on shutdown at all -- streams (and, on
+        Pluto, the continuously-transmitting cyclic TX buffer) were
+        just abandoned when the process exited.
+        """
+        if not self.connected:
+            return
+        try:
+            if self.backend == "hackrf":
+                if self.tx_stream is not None:
+                    self.sdr.closeStream(self.tx_stream)
+                if self.rx_stream is not None:
+                    self.sdr.closeStream(self.rx_stream)
+            elif self.backend == "pluto":
+                # stop the cyclic TX buffer before dropping the handle so
+                # the board isn't left radiating after the process exits
+                try:
+                    self.sdr.tx_destroy_buffer()
+                except AttributeError:
+                    pass
+            print(f"[SDR] {self.backend} stream(s) closed cleanly.")
+        except Exception as e:
+            print(f"[SDR] Error while closing {self.backend} stream(s): {e}")
+        finally:
+            self.connected = False
+            self.tx_stream = None
+            self.rx_stream = None
+            self.sdr = None
+
     def transmit_pulse(self):
         # only meaningful for the hackrf pulse-then-listen path -- pluto's
         # chirp is already transmitting continuously from connect() onward,

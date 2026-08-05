@@ -116,6 +116,15 @@ class RadarScanner(threading.Thread):
         # every config.STATION_ID_INTERVAL_SEC while actively transmitting
         self.last_id_time = 0.0
 
+        # alert debounce: an alert type must appear on 2 consecutive
+        # sweeps before it's surfaced (cuts single-sweep false positives),
+        # and once fired, that type won't fire again for 30s even if it
+        # keeps qualifying every sweep.
+        self._alert_streak  = {}   # type -> consecutive sweep count
+        self._alert_last_fired = {}  # type -> time.time() last surfaced
+        self.ALERT_CONFIRM_SWEEPS = 2
+        self.ALERT_COOLDOWN_SEC   = 30.0
+
     def apply_az_correction(self, raw_azimuth):
         # offset dish geometry couples elevation into azimuth --
         # this backs that out so logged returns are true compass bearing
@@ -247,7 +256,7 @@ class RadarScanner(threading.Thread):
 
         if extreme_returns:
             max_ex = max(extreme_returns, key=lambda x: x[2])
-            if max_ex[1] < 6.0:
+            if max_ex[1] < 5.0:
                 alerts.append({
                     "type":  "DANGER",
                     "msg":   "Severe cell / Core within 5km zone",
@@ -264,7 +273,51 @@ class RadarScanner(threading.Thread):
                 "az":    f"{track['heading_deg']}°"
             })
 
-        self.state["alerts"] = alerts[::-1]
+        self.state["alerts"] = self._debounce_alerts(alerts)[::-1]
+
+    def _debounce_alerts(self, candidate_alerts):
+        """
+        TRACK is informational and passes straight through -- it's not
+        a threat alert, just current storm motion, so debouncing it
+        would just make the displayed heading laggy.
+
+        Every other alert type must appear on ALERT_CONFIRM_SWEEPS
+        consecutive sweeps before it's surfaced, and won't re-surface
+        for ALERT_COOLDOWN_SEC after it last fired even if it keeps
+        qualifying every sweep.
+        """
+        now = time.time()
+        seen_types = set()
+        surfaced = []
+
+        for alert in candidate_alerts:
+            atype = alert["type"]
+            if atype == "TRACK":
+                surfaced.append(alert)
+                continue
+
+            seen_types.add(atype)
+            streak = self._alert_streak.get(atype, 0) + 1
+            self._alert_streak[atype] = streak
+
+            if streak < self.ALERT_CONFIRM_SWEEPS:
+                continue
+
+            last_fired = self._alert_last_fired.get(atype, 0.0)
+            if now - last_fired < self.ALERT_COOLDOWN_SEC:
+                continue
+
+            self._alert_last_fired[atype] = now
+            surfaced.append(alert)
+
+        # types that didn't qualify this sweep reset their streak so a
+        # later reappearance has to re-confirm rather than inheriting
+        # an old streak
+        for atype in list(self._alert_streak):
+            if atype not in seen_types:
+                self._alert_streak[atype] = 0
+
+        return surfaced
 
     def maybe_transmit_id(self):
         # only actually required while transmitting -- skip if hardware
@@ -407,3 +460,4 @@ class RadarScanner(threading.Thread):
 
         self.gps.stop()
         self.motor.disconnect()
+        self.sdr.close()

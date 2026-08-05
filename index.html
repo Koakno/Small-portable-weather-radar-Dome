@@ -136,6 +136,10 @@
         const gctx = gridCanvas.getContext('2d');
         const ctx = radarCanvas.getContext('2d');
         const cx = 400, cy = 400, rMax = 380;
+        // was hardcoded to 20 in 5 places below -- now driven by the
+        // same config.MAX_RANGE_KM the server renders into the page,
+        // so changing that setting doesn't silently mis-plot every echo
+        const MAX_RANGE_KM = {{ max_range }};
 
         // Offscreen canvas caches the map render so it only
         // redraws when GPS position changes, not every 200ms frame
@@ -210,10 +214,39 @@
 
             const cleanLon = parseFloat(carLon) || -86.1336;
             const cleanLat = parseFloat(carLat) || 40.4864;
-            const pixelsPerKm = rMax / 20;
+            const pixelsPerKm = rMax / MAX_RANGE_KM;
 
             const toPixel = (lon, lat) =>
                 mapLatLonToPixels(lon, lat, cleanLon, cleanLat, cx, cy, pixelsPerKm);
+
+            // Was testing only feature.geometry.coordinates[0][0] (the
+            // ring's first vertex) to decide if a feature was on screen --
+            // a county/road with that one point off-canvas would vanish
+            // entirely even if most of its shape was visible. This walks
+            // every vertex and culls only if the whole bounding box misses
+            // the viewport.
+            const geometryOnScreen = (geometry) => {
+                let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                const visit = (coords, depth) => {
+                    if (depth === 0) {
+                        const px = toPixel(coords[0], coords[1]);
+                        if (px.x < minX) minX = px.x;
+                        if (px.x > maxX) maxX = px.x;
+                        if (px.y < minY) minY = px.y;
+                        if (px.y > maxY) maxY = px.y;
+                    } else {
+                        coords.forEach(c => visit(c, depth - 1));
+                    }
+                };
+                const depthByType = {
+                    "LineString": 1, "MultiLineString": 2,
+                    "Polygon": 2, "MultiPolygon": 3
+                };
+                const depth = depthByType[geometry.type];
+                if (depth === undefined) return true; // unknown type, don't cull
+                visit(geometry.coordinates, depth);
+                return !(maxX < -100 || minX > 900 || maxY < -100 || minY > 900);
+            };
 
             // Pass 1: County boundaries (green)
             if (indianaMapData) {
@@ -233,9 +266,7 @@
 
                 indianaMapData.features.forEach(feature => {
                     if (!feature.geometry) return;
-                    let testCoord = feature.geometry.coordinates[0][0];
-                    let testPx = toPixel(testCoord[0], testCoord[1]);
-                    if (testPx.x < -100 || testPx.x > 900 || testPx.y < -100 || testPx.y > 900) return;
+                    if (!geometryOnScreen(feature.geometry)) return;
                     if (feature.geometry.type === "Polygon") {
                         drawPolygon(feature.geometry.coordinates[0]);
                     } else if (feature.geometry.type === "MultiPolygon") {
@@ -261,11 +292,7 @@
 
                 indianaRoadsData.features.forEach(feature => {
                     if (!feature.geometry) return;
-                    let testCoord = feature.geometry.type === "LineString"
-                        ? feature.geometry.coordinates[0]
-                        : feature.geometry.coordinates[0][0];
-                    let testPx = toPixel(testCoord[0], testCoord[1]);
-                    if (testPx.x < -100 || testPx.x > 900 || testPx.y < -100 || testPx.y > 900) return;
+                    if (!geometryOnScreen(feature.geometry)) return;
                     if (feature.geometry.type === "LineString") {
                         drawLineString(feature.geometry.coordinates);
                     } else if (feature.geometry.type === "MultiLineString") {
@@ -313,8 +340,10 @@
         function updateSidebar(data) {
             document.getElementById('lblSweep').innerText = data.sweep_count;
             document.getElementById('lblAz').innerText = `${data.current_azimuth}°`;
-            document.getElementById('lblLat').innerText = `${data.location.lat.toFixed(5)}° N`;
-            document.getElementById('lblLon').innerText = `${data.location.lon.toFixed(5)}° W`;
+            const latHemi = data.location.lat >= 0 ? 'N' : 'S';
+            const lonHemi = data.location.lon >= 0 ? 'E' : 'W';
+            document.getElementById('lblLat').innerText = `${Math.abs(data.location.lat).toFixed(5)}° ${latHemi}`;
+            document.getElementById('lblLon').innerText = `${Math.abs(data.location.lon).toFixed(5)}° ${lonHemi}`;
             document.getElementById('lblAlt').innerText = `${data.location.alt} m`;
 
             // Elevation display
@@ -367,7 +396,7 @@
             const leftPts = [];
             const rightPts = [];
             projection.forEach(p => {
-                const distancePixels = (p.range / 20.0) * rMax;
+                const distancePixels = (p.range / MAX_RANGE_KM) * rMax;
                 const leftAngleRad  = (p.az - p.cone_half_angle - 90) * Math.PI / 180.0;
                 const rightAngleRad = (p.az + p.cone_half_angle - 90) * Math.PI / 180.0;
                 leftPts.push({
@@ -396,7 +425,7 @@
             ctx.beginPath();
             ctx.moveTo(cx, cy);
             projection.forEach(p => {
-                const distancePixels = (p.range / 20.0) * rMax;
+                const distancePixels = (p.range / MAX_RANGE_KM) * rMax;
                 const angleRad = (p.az - 90) * Math.PI / 180.0;
                 ctx.lineTo(cx + distancePixels * Math.cos(angleRad), cy + distancePixels * Math.sin(angleRad));
             });
@@ -406,7 +435,7 @@
             ctx.fillStyle = "#d8b4fe";
             ctx.font = "10px 'Courier New', monospace";
             projection.forEach(p => {
-                const distancePixels = (p.range / 20.0) * rMax;
+                const distancePixels = (p.range / MAX_RANGE_KM) * rMax;
                 const angleRad = (p.az - 90) * Math.PI / 180.0;
                 const x = cx + distancePixels * Math.cos(angleRad);
                 const y = cy + distancePixels * Math.sin(angleRad);
@@ -428,7 +457,7 @@
 
                 data.returns.forEach(pt => {
                     let angleRad       = (pt[0] - 90) * Math.PI / 180.0;
-                    let distancePixels = (pt[1] / 20.0) * rMax;
+                    let distancePixels = (pt[1] / MAX_RANGE_KM) * rMax;
                     ctx.fillStyle = getColorFromStrength(pt[2]);
                     ctx.beginPath();
                     ctx.arc(
