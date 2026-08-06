@@ -14,19 +14,21 @@ I got close enough to a tornado once that NEXRAD flat out didn't have it — not
 
 Professional mobile Doppler radar trucks (DOW — Doppler on Wheels) do something similar. They cost $500,000+. This is built from salvage and hobbyist SDR gear.
 
-**Important status note, added after posting this publicly:** the active-transmit side of this project is currently on hold. I found out the pulsed transmission scheme described below is not actually authorized on the 10.0-10.5 GHz amateur allocation — see the [Licensing](#licensing) section for the full explanation. Right now this repo represents the receive/signal-chain design and the software stack, tested primarily against the built-in simulation mode. Treat the RF section as documentation of the approach, not a green light to transmit as-is.
+**Status note:** the active-transmit side of this project is still not something I'd call settled — see [Licensing](#licensing) for where that actually stands right now, including real pushback the reasoning has gotten. Software-side, this now supports two independent radar timing modes (pulsed and FMCW — see [SDR Hardware](#sdr-hardware)), chosen automatically based on connected hardware. **I have not gotten a licensed authority to sign off on either transmit scheme.** Receive-only operation and the simulation mode remain the zero-risk way to run this today.
 
 ---
 
 ## What It Looks Like Running
 
-Live PPI radar display served as a web page, accessible on any device on your local network. Offline Indiana county and road map overlay. Alert feed with tiered severity. GPS position tracking with manual fallback. Transit mode that locks the dish forward while driving and resumes full sweeps when stopped. Multi-sweep storm cell tracking with a projected cone of uncertainty, similar in spirit to how NHC draws a hurricane track cone, but derived live from this radar's own recent heading consistency.
+Live PPI radar display served as a web page, accessible on any device on your local network. Offline Indiana county and road map overlay. Alert feed with tiered severity and multi-sweep confirmation. GPS position tracking with manual fallback. Transit mode that locks the dish forward while driving and resumes full sweeps when stopped. Multi-sweep storm cell tracking with a projected cone of uncertainty, similar in spirit to how NHC draws a hurricane track cone, but derived live from this radar's own recent heading consistency.
 
 [![Live at radar.koakno.com](https://img.shields.io/badge/Live%20Demo-radar.koakno.com-00FFFF?style=flat-square)](https://radar.koakno.com)
 
 ### Try It Without Any Hardware
 
 The repo includes `portable_radar_simulator.html` — a fully self-contained, single-file browser demo. No Flask server, no Python, no hardware. It runs the same alert-escalation logic and storm-track/cone-of-uncertainty math as the real backend, driving two synthetic drifting storm cells across the scope so you can see the whole system (INFO → CAUTION → WARNING → DANGER, transit mode, the tracking cone) work end to end. Just open the file in a browser. This is the easiest way to evaluate the project before building any hardware.
+
+The full Python stack does the same thing automatically if it doesn't find an SDR — everything degrades to a live simulation rather than crashing, so you can run and test the whole software stack (alerts, tracking, the web UI) with zero RF hardware at all.
 
 ---
 
@@ -36,7 +38,7 @@ The repo includes `portable_radar_simulator.html` — a fully self-contained, si
 
 The Winegard Carryout Anser GM-5000 is an automatic RV satellite dome — a motorized prime focus parabolic dish in a weatherproof radome, originally designed to find and track TV satellites. The idea is to repurpose it as a scanning X-band radar antenna.
 
-The Eagle Aspen LNB inside operates at 11250 MHz local oscillator frequency. Injecting a signal at **850 MHz** into the LNB's IF port causes it to upconvert and radiate at **10.4 GHz** through the dish — the same X-band frequency range used by weather radar. Rain, hail, and debris would reflect a portion of that energy back, and the LNB downconverts the echo back to 850 MHz for the SDR to capture.
+The Eagle Aspen LNB inside operates at 11250 MHz local oscillator frequency. Injecting a signal at **850 MHz** into the LNB's IF port causes it to upconvert and radiate at **10.4 GHz** through the dish — the same X-band frequency range used by weather radar. Rain, hail, and debris reflect a portion of that energy back, and the LNB downconverts the echo back to 850 MHz for the SDR to capture.
 
 ```
 TX injection frequency math:
@@ -44,7 +46,14 @@ TX injection frequency math:
   Inject 850 MHz -> dish radiates 10.4 GHz
 ```
 
-**As currently designed this is a pulsed scheme, and pulsed emission is not authorized on the 3 cm amateur band.** See [Licensing](#licensing) — this needs to become a different modulation approach (spread-spectrum/chirp is the likely candidate) before it's transmitted for real.
+### Two Radar Timing Modes, Chosen Automatically By Your Hardware
+
+This isn't a setting you pick. `sdr.py` tries to connect to a Pluto/AD9363 board first, then a HackRF, and whichever one it finds determines the timing model — because the two boards are physically different in a way that makes one mode correct for each:
+
+- **HackRF (half-duplex)** — one shared RF front end, physically cannot transmit and receive at the same instant. The software uses **pulsed** timing: transmit a short pulse, stop, listen for the return, repeat. This is the only mode that makes sense on this hardware.
+- **Pluto/AD9363 (full-duplex)** — independent TX and RX chains, genuinely can transmit and receive simultaneously. The software runs a continuous **FMCW** chirp and dechirps the return in software (`build_fmcw_chirp` / `dechirp_range_profile` in `sdr.py`).
+
+If neither board is found, everything falls back to simulation mode. There's no menu, no config flag to flip — `RadarSDR.connect()` figures out what's plugged in and every other method (`transmit_pulse`, `transmit_morse_id`, `get_range_profile`) branches on `self.backend` from there. One codebase, hardware picks the mode.
 
 ### Signal Chain (as designed)
 
@@ -61,7 +70,7 @@ SDR TX port (850 MHz)
     -> SDR RX port
 ```
 
-The **MAIN** port handles TX injection. The **SEC** port (second LNB output, active simultaneously) provides a clean dedicated receive path. A bias tee on the SEC coax powers the LNB. No shared TX/RX path, no switching, no backfeed concern.
+The **MAIN** port handles TX injection. The **SEC** port (second LNB output, active simultaneously) provides a clean dedicated receive path. A bias tee on the SEC coax powers the LNB. No shared TX/RX path on the dish side, no switching, no backfeed concern — that isolation is a property of the LNB's two physical outputs, independent of which SDR/timing mode you're running.
 
 ---
 
@@ -113,9 +122,10 @@ Baud rate: 57600, 8N1
 
 ## SDR Hardware
 
-**What the software actually supports today:** HackRF One, via SoapySDR.
+**Both HackRF One and Pluto/AD9363 (Zynq7020, libiio/pyadi-iio) are supported, auto-detected in that order at startup.** See [Two Radar Timing Modes](#two-radar-timing-modes-chosen-automatically-by-your-hardware) above for why each board gets a different timing model rather than a shared one.
 
-I've since moved my own hardware over to a Zynq7020 + AD9363 board (Pluto firmware, accessed over Ethernet/libiio) because of the full-duplex TX/RX and the fact it works cleanly from Android/Termux without USB permission headaches. That driver path isn't written yet, though — `sdr.py` is HackRF-only right now. If you're building this today, plan around HackRF, or expect to write the Pluto backend yourself (or wait for me to).
+- **HackRF One**, via SoapySDR — the more common/cheaper entry point, pulsed mode.
+- **Pluto/AD9363**, via libiio — full-duplex, continuous FMCW mode. Also works cleanly from Android/Termux over Ethernet without USB permission headaches. The Pluto backend is newer and less field-tested than the HackRF path — treat it as needing real-hardware verification before you trust it (see the `UNVERIFIED AGAINST REAL HARDWARE` notes in `sdr.py`).
 
 If no SDR is detected at all (or you just want to evaluate the software), everything falls back to simulation mode automatically — synthetic storm cells that drift and behave like the standalone HTML demo above, so the rest of the stack (alerts, tracking, display) is fully testable without any RF hardware.
 
@@ -135,7 +145,7 @@ The HackRF has two SMA connectors, and people commonly misidentify them:
 | Item | Notes | Price |
 |---|---|---|
 | Winegard Carryout Anser GM-5000 | Salvage yards, RV surplus, Facebook Marketplace | $5-40 |
-| HackRF One | Currently the only SDR the software drives directly | ~$300 |
+| HackRF One **or** Pluto/AD9363 (Zynq7020) | Either is supported and auto-detected; see [SDR Hardware](#sdr-hardware) for which mode you get | ~$300 / varies |
 | F-to-SMA adapters (x2) | Female F to Male SMA | ~$10 |
 | DTECH RS232-to-RS485 converter | Specifically DTECH brand | ~$12 |
 | RJ-25 6-pin phone cord | Must be 6-conductor, NOT standard RJ-11 | ~$5 |
@@ -170,8 +180,8 @@ portable_radar/
 |-- app.py                        Flask web server, /api/telemetry endpoint
 |-- radar_scanner.py              Main scan loop thread, alerts, storm tracking
 |-- motor.py                      RS-485 motor control, paced sweep, position verify
-|-- sdr.py                        HackRF/SoapySDR interface + simulation fallback
-|-- gps.py                        NMEA GPS parser, speed detection, transit mode
+|-- sdr.py                        HackRF (pulsed) + Pluto (FMCW) backends, auto-detected, + simulation fallback
+|-- gps.py                        NMEA GPS parser (with checksum validation), speed detection, transit mode
 |-- simplify_maps.py              One-time GeoJSON optimization (run once before first use)
 |-- portable_radar_simulator.html No-hardware standalone browser demo (see above)
 |-- static/
@@ -192,6 +202,8 @@ sudo apt install python3-pip python3-numpy \
 
 # Python dependencies
 pip install flask pyserial
+# If you're running the Pluto/FMCW path, also:
+pip install pyadi-iio
 
 # Clone this repo
 git clone https://github.com/Koakno/Small-portable-weather-radar-Dome
@@ -226,6 +238,8 @@ MANUAL_LON  = -86.1336
 
 TARGET_SWEEP_SECONDS         = 20.0   # Set to your motor's real full-360 rotation time
 MOVEMENT_SPEED_THRESHOLD_MPH = 2.0    # Above this, dish locks forward (transit mode)
+
+PLUTO_URI = "ip:192.168.2.1"          # Only used if a Pluto is what gets detected
 ```
 
 ### Running
@@ -251,7 +265,7 @@ On startup you'll be prompted for the current dish elevation (this dome has no e
        Azimuth correction: -4.0 deg applied to all returns
 ```
 
-The software applies an automatic azimuth correction to compensate for the offset dish geometry coupling elevation into azimuth. Open your browser to `http://localhost:5000`.
+The software applies an automatic azimuth correction to compensate for the offset dish geometry coupling elevation into azimuth. It will also print which SDR backend it found (Pluto/HackRF/simulation) — that's the only indication of which radar timing mode you're running, there's nothing to configure. Open your browser to `http://localhost:5000`.
 
 ---
 
@@ -261,21 +275,21 @@ The software applies an automatic azimuth correction to compensate for the offse
 
 - Canvas-based PPI (Plan Position Indicator) radar scope
 - Standard NWS-style reflectivity color scale (cyan -> green -> yellow -> orange -> red -> magenta)
-- Offline Indiana county boundaries and road overlay (no internet required)
+- Offline Indiana county boundaries and road overlay (no internet required), culled to the visible viewport by full geometry bounding box, not a single test vertex
 - Real-time sweep line animation
 - Telemetry polled every 200ms
 
 ### Alert System
 
-Tiered alert feed, generated once per full sweep:
+Tiered alert feed, generated once per full sweep. Every tier except TRACK requires the same alert type to qualify on **2 consecutive sweeps** before it's surfaced, and won't re-fire for **30 seconds** after it last did — this cuts down single-sweep noise spikes from painting the alert feed with flickering false positives.
 
 | Tier | Trigger |
 |---|---|
 | INFO | Any precipitation detected |
 | CAUTION | Storm core in range |
 | WARNING | Supercell-scale signature (high density of strong returns) |
-| DANGER | Extreme-strength return within 6 km |
-| TRACK | Multi-sweep storm heading/speed, with a widening cone of uncertainty |
+| DANGER | Extreme-strength return within 5 km |
+| TRACK | Multi-sweep storm heading/speed, with a widening cone of uncertainty (informational, not debounced — this reflects current motion, not a threshold event) |
 
 ### Transit Mode
 
@@ -291,6 +305,14 @@ Below threshold, full azimuth sweeps resume automatically, alternating direction
 ### Storm Track / Cone of Uncertainty
 
 Tracks the centroid of the strongest return cluster across sweeps, derives a heading and speed, and projects it forward 5/10/15/20 minutes as a widening cone drawn directly on the PPI display. The cone width is driven by how consistent the storm's recent heading has actually been — a steady bearing narrows it, a wobbling one widens it — rather than a fixed value.
+
+---
+
+## Detection Range — Set Your Expectations Honestly
+
+`config.MAX_RANGE_KM` is set to a conservative **20 km** default. Earlier project descriptions (and some early coverage) floated 40-60 km figures — those assumed close to ideal free-space propagation to a strong reflector, and don't hold up as well at ground level once you account for Earth curvature and terrain/foliage clutter cutting into the effective radar horizon, the stock Eagle Aspen LNB's noise figure and gain, and how low in the atmosphere the precipitation you actually care about tends to sit versus your beam elevation.
+
+20 km is a deliberately conservative starting point, not a hard physical ceiling in either direction. A higher-gain LNB or an added amplifier stage will genuinely extend real detection range — if you tune your setup and get more (or less), change `MAX_RANGE_KM` to match what you're actually seeing rather than trusting a marketing-style number.
 
 ---
 
@@ -321,15 +343,21 @@ The dome mounts to a roof rack via its standard base. Orient so the MAIN/SEC F c
 
 ## Licensing
 
-**Read this section before building the TX side of this project.**
+**Read this section before building the TX side of this project. None of this is legal advice — I'm not an attorney, and this is genuinely unresolved. Verify independently before you transmit.**
 
-Transmitting on the 3 cm amateur band (10.0-10.5 GHz) requires a Technician class amateur radio license at minimum. But holding a license is not the whole story — **the emission type matters, and pulsed transmission is not authorized on this specific band.**
+Transmitting on the 3 cm amateur band (10.0-10.5 GHz) requires a Technician class amateur radio license at minimum. Holding a license is not the whole story, though — **the emission type matters.**
 
-Per 47 CFR 97.305(c)(6)(ii), the 3 cm band authorizes: MCW, phone, image, RTTY, data, SS (spread spectrum), and test emissions. Pulse is not on that list for this band — compare that to the neighboring 5 cm and 1.2 cm bands, which do explicitly authorize pulse. The scheme described earlier in this README (injecting 850 MHz to get the LNB to radiate 10.4 GHz) is, as designed, a pulsed scheme, which means it is **not currently legal to transmit as documented here.**
+Per 47 CFR 97.305(c)(6)(ii), the 3 cm band authorizes: MCW, phone, image, RTTY, data, SS (spread spectrum), and test emissions. Plain pulse is not on that list for this band — compare that to the neighboring 5 cm and 1.2 cm bands, which do explicitly authorize pulse. That's the reason the original as-documented pulsed design isn't something to just key up and transmit.
 
-I found this out after posting this project publicly, and I'm leaving the RF design documented above as-is because it's still useful reference material, but treat it as "how the concept works," not "what to go build and key up." I'm currently looking into whether a spread-spectrum (chirp/noise-radar style) approach fits the SS emission designator instead, since SS is explicitly authorized on this band. I'd treat that as a real possibility, not a settled answer — the exact line between what legally counts as "SS" versus what still reads as "pulse" under the Part 97 emission-designator rules is a genuinely fine-grained classification question, and I'm not the authority on it. If you're planning to actually transmit, verify your specific waveform's classification with your local club's microwave/EME people or ARRL directly before you do, don't just take my word for it.
+Two directions are on the table right now, and I haven't committed to either one — both need real scrutiny before they're anything more than a hypothesis:
 
-Until that's sorted:
+**FMCW / chirp (the `sdr.py` Pluto backend).** A swept-frequency chirp plausibly reads as SS (spread spectrum) or data, both explicitly authorized on this band. This is the more conventional-looking path of the two, and it's what the Pluto backend implements — but "plausibly reads as" isn't the same as confirmed.
+
+**A pulsed transmission where the pulse itself is the Morse-coded station callsign (the HackRF backend's direction).** The idea: §97.3(a)(9) defines a beacon as a station transmitting for the purpose of observation of propagation and reception or other related experimental activities, and §97.203(d) permits automatically-controlled beacon operation on bands shorter than 33 cm, which 10.4 GHz qualifies for. Precipitation backscatter is a propagation phenomenon, so the argument is that framing the transmission as a beacon studying backscatter — rather than as a radiolocation service — is a real category that exists in amateur radio, structurally similar to how meteor-scatter forward-scatter work already operates.
+
+I want to be direct about where this actually stands: when this reasoning has been run past outside technical review, it's gotten real pushback — the counterargument being that wrapping a legally-required Morse ID around a signal whose underlying purpose is still radiolocation doesn't change what the FCC would classify the transmission as. I don't currently know which read is correct, and I'm not going to present the beacon argument as settled just because it's an interesting theory. **I'm not committing to this direction for now.** If you're planning to actually transmit under either scheme, verify your specific waveform and framing with your local club's microwave/EME people, ARRL's Technical/Regulatory staff, or a communications attorney before you key up — don't take my word, or this README's, for it.
+
+Until one of these is actually confirmed:
 
 - **Receive-only operation** (using an RTL-SDR or similar, no TX at all) sidesteps this issue entirely and is a reasonable way to experiment with the signal chain and software today.
 - **The simulation mode / standalone HTML demo** requires no transmission and no license at all — it's the safest way to evaluate the software right now.
@@ -351,6 +379,12 @@ General ham licensing background, if you're starting from zero:
 > The dome is rated to 35 mph wind loading. Stow it when driving at highway speed. Do not operate during hail.
 
 > Do not transmit until you've actually resolved the licensing question above for your specific setup. See [Licensing](#licensing).
+
+---
+
+## Recent Fixes
+
+A round of community testing surfaced several real bugs that are now fixed: azimuth sweep double-sampling the 0°/360° boundary, the DANGER alert threshold not matching its own displayed wording, a motor command reply that could be misread as a failure, a serial read that could stall a full second waiting on a silent controller, GPS fix status that never cleared after a lost fix, missing NMEA checksum validation, a hardcoded range scale baked into five places in the display instead of following `MAX_RANGE_KM`, hardcoded N/W hemisphere labels, map feature culling that tested a single vertex instead of a bounding box, and the SDR connection never being explicitly closed on shutdown. Thanks to everyone who dug into the code and reported these.
 
 ---
 
